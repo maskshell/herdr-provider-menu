@@ -103,7 +103,7 @@ T8 剩余工作:在当前 claude 版本复验空串语义;T6 未暴露的原因:
 
 ### 4.2 后续相位
 
-- **codex(Phase 2)**:`settings_config → -c 覆盖` 的映射,语义参考cc-switch Rust `codex_terminal`(纯 argv,连文件都不用);Windows 的 pwsh 内联 JSON 投递也在本相位验证(T3)。
+- **codex(Phase 2)**:已落地 → §4.6(2026-11-19,配方镜像上游 `codex_terminal`,纯 argv)。Windows 的 pwsh 验证仍在后续(T3)。
 - **官方账号(Phase 3,可选)**:`CLAUDE_CONFIG_DIR` 指向 per-account 目录;仅本机(目录需存在于目标机)。隔离轴:API 卡只切**身份**(临时 settings, 世界共享),官方账号才切**世界**(登录/钥匙串本来就该分)。
 - **无逃生门的 CLI(grok 类)**:菜单显式拒绝行,绝不静默落到全局切换
 
@@ -161,6 +161,20 @@ T8 剩余工作:在当前 claude 版本复验空串语义;T6 未暴露的原因:
 - sqlite3 缺失 / DB 缺失 / 解析失败:exec reject 或非零退出 → 菜单提示行(区分"装 sqlite3"与"先在 cc-switch 里加 provider"),不静默空列表。
 - 启动后 2 秒内非零退出:herdr 现成的 launch_failure toast 兜底(window.rs:138),mod 不用自己报。
 - argv[0] 是 `env`:7501 上报前终端显示 "program"+哈希色(programs.rs 的resolve 不认识 env),claude 起来后 `app` 报告优先,自动纠正。可接受, 无需 programs.json 条目。
+
+### 4.6 Codex(API 卡,2026-11-19 Phase 2 落地)
+
+cc-switch 存 codex 卡为 `settings_config = { auth: {OPENAI_API_KEY} | string, config: TOML 文本 }`,切换时把卡投影写进 live `~/.codex/config.toml`(键集 = floor.rs 的 FLOOR/EXCLUSIVE);`-c key=value` 与 config.toml **逐键合并、只改值不删键**,这是整个配方的约束源。代码组织:providers.js 以 HARNESS 注册表分派(claude/codex 各一个策略:classify/mergeCommon/launch),共享管道(query/rcMode/extras/machineHome)作上下文,新 harness = 新增一个条目。
+
+**配方**(镜像 `services/provider/codex_terminal.rs`):`env CC_SWITCH_CODEX_API_KEY=… CODEX_HOME=$HOME/.codex codex --no-daemon -c …`。路由表重写为 `model_providers.custom={…}` 且 `env_key=CC_SWITCH_CODEX_API_KEY`——**key 走环境变量不上命令行**(上游同款;`env_key` 还压得住 live 残留 bearer,且 codex 进程的 /proc/PID/cmdline 不含 key,比 claude 侧 argv 内联 token 更优,README 安全段已记)。`requires_openai_auth` 按 live auth.json 有无登录态现算(上游 `requires_openai_auth(auth, login)` 语义);`wire_api` 缺省 `'responses'`、`supports_websockets` 缺省 `false`。`--no-daemon` 来自 herdr programs.json 的 codex run 约定。CODEX_HOME 显式钉住,防 shell 导出改道;cc-switch 设置里的 override 目录不读,恒用 `~/.codex`(限制,README 已记)。卡的 TOML 用行级子集解析(表头/键值/行内表,值保留原文重渲染,免引号往返)。
+
+**可启判定(白名单 = 上游 `codexHasOwnRoute` + key)**:非 official、带 key(auth 或表内 bearer)、自带路由表(base_url)、非 router-only(meta.is_full_url / api_format ∈ {openai_chat, anthropic} / wire_api=chat)。拒启原因入 UI 提示:official(跟 Codex 自身登录走,`-c` 换不动登录——用户实机观察到"official 无终端图标"即此因,非凭据缺失;上游 App.tsx:1643 只给 {claude, codex, agy, grokbuild, copilot} 五家注入终端按钮,pi/dsh 等无此按钮)/follows-login/builtin/no-table/no-key/router。
+
+**live 残留中和**(镜像上游 Neutral 表):effort 两键→`'medium'`、verbosity→`'medium'`、supports_reasoning_summaries→`false`、review_model/subagent/memories 模型→卡 model;中和不了的一律拒启并提示"先在 cc-switch 切到这张卡"(model 缺、model_context_window、model_auto_compact_token_limit、model_catalog_json、路由表未覆盖键如 http_headers、live 选了 profile)。`experimental_bearer_token`(env_key 压制)与 PROXY_KEPT_CLIENT_KEYS(重试/超时三键)豁免。
+
+**与上游的两处有意分歧**:① live 残留 `model_catalog_json` 时上游为该卡生成单模型目录盖过,mod 无目录生成 → 拒启;② BuiltIn 路由(裸选 ollama/lmstudio/bedrock)上游可直启 `model_provider=<id>`,mod 拒(本地 provider 场景罕见,拒绝语义诚实)。rc 模式与 extra args 通用机制对 codex 同样生效(launchArgv 统一分派)。
+
+**验证**:上游 codex_terminal.rs 的测试夹具作 oracle 的纯函数冒烟(KIMI 卡 × PROXY_MANAGED live、http_headers 残留、keyless、context_window、subagent 跟随、profile 六场景全对齐,分歧两处按上记落拒启);`herdr-app check` mod/agent-menu 双过。待验:mac 实机 codex 卡 E2E(用户有真卡)、T5 远端半场、sandbox UI 半场。
 
 ## 5. UI
 
@@ -227,7 +241,7 @@ sandbox 是 herdr-app 仓库自带的(`scripts/sandbox`,独立 core/home/显示)
 |---|---|---|
 | P0(本仓库骨架) | docked 面板:读→合并→启动 + 提示行 | T0/T1 过;sandbox 里以两个 provider 各启一个终端,并行不串扰,7501 正常 |
 | P1 | 三层克隆 + 行内展开子菜单 | T4 结论落地;`check` ×3 过;数字键/返回可用 |
-| P2 | codex `-c` 路线(对齐上游 `codex_terminal` 纯 argv)+ Windows;附带上游 issue 三条:①API 卡走账号目录(ADR-C,成则 T8 挡键机制可删)②headless/CLI 支持 ③可配置终端启动器(成则 cc-switch 可直开进 herdr,本 mod 退位)——写时引本地源码行号 | T3 过;codex 两 provider 并行。注:AppType 已 14+ CLI(含 OpenClaw/Pi/Kimi)——cc-switch 是整个 harness 动物园的身份库,codex 配方是「第 N 个实例」而非第二个 |
+| P2 | codex `-c` 路线(对齐上游 `codex_terminal` 纯 argv)——**已落地(§4.6,2026-11-19)**,实机 E2E 待验;Windows(T3);附带上游 issue 三条:①API 卡走账号目录(ADR-C,成则 T8 挡键机制可删)②headless/CLI 支持 ③可配置终端启动器(成则 cc-switch 可直开进 herdr,本 mod 退位)——写时引本地源码行号 | T3 过;codex 两 provider 并行。注:AppType 已 14+ CLI(含 OpenClaw/Pi/Kimi)——cc-switch 是整个 harness 动物园的身份库,codex 配方是「第 N 个实例」而非第二个 |
 | P3(可选) | 本地 settings 文件路由(0600+惰性清理)、官方账号 CLAUDE_CONFIG_DIR | 按需 |
 
 ## 11. 证据索引(本会话核实)

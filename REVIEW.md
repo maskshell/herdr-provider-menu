@@ -193,3 +193,7 @@ mac GUI 机复验 extras 与 rc 两条路径无误(args 行持久旗子、rc pro
 ## Pass 14 — seed 脚本定位纠偏:验证工具而非建库方式(2026-11-19)
 
 用户指正:README 曾把「无头机用 seed-cc-switch-db.py 造库」写成安装路径,错位——seed 只从 spec(取自当前 live settings)造出单 provider 测试库,无实用供给价值;正式路径是 cc-switch 官方 DB 同步(WebDAV 等)或 GUI 机配置。边界定案:**DB 的供给与同步由用户自行解决,不在本 mod(及 herdr)的业务范畴**。落地:README 双语三处改写(Install 分流"正式使用/仅供测试"、无头机段分两段、scripts 表行改"验证工具");DESIGN §2 无头机缺口段补边界声明,seed 降为验证工具、拷库标注会漂移不算正路、上游 CLI/headless ask 维持。上游三条 asks 不变。
+
+## Pass 15 — Phase 2 codex 落地(2026-11-19)
+
+上游事实先行(本机 clone @ 6da70837):终端按钮只注入 {claude, codex, agy, grokbuild, copilot} 五家(App.tsx:1643)——pi/dsh/opencode 等无此按钮,grok 仅当前卡可开且无隔离(OpenTerminalDialog.tsx:152/192);codex official 卡无按钮是结构性的(`codexHasOwnRoute` 首行排除 official;`-c` 换不动 OAuth 登录,codex_terminal.rs follows_login),非凭据缺失——用户实机观察到的现象由此定谳;claude official 恒有按钮(绑授权中心账号→CLAUDE_CONFIG_DIR 隔离,未绑→跟全局登录"不能说隔离")。配方镜像 codex_terminal.rs:`env CC_SWITCH_CODEX_API_KEY=… CODEX_HOME=… codex --no-daemon -c …`,路由表重写为 model_providers.custom + env_key(key 不上命令行,优于 claude 侧 argv 内联);requires_openai_auth 按 live auth.json 登录态;live 残留按上游 Neutral 表中和,中和不了拒启。代码组织按用户要求引入设计模式:HARNESS 注册表 + 每 harness 策略(classify/mergeCommon/launch),readProviders/launchArgv 退化为薄分派,UI 侧同构 SUBMENUS 注册表(拒启原因映射表)。验证:上游测试夹具作 oracle 的纯函数冒烟六场景对齐(http_headers 残留拒、keyless 拒、context_window 拒、subagent 跟随、profile 拒、KIMI over PROXY_MANAGED live 全对);check 双过。两处有意分歧(记入 DESIGN §4.6/README):model_catalog_json 残留上游生成单模型目录、mod 拒启;BuiltIn 路由上游可启、mod 拒。待验:mac 实机 codex 真卡 E2E、T5 远端、sandbox UI 半场、Windows T3。
