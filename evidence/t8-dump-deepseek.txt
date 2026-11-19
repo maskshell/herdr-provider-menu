@@ -1,0 +1,4 @@
+== argv (2)
+  [1] --settings
+  [2] {"env":{"ANTHROPIC_BASE_URL":"https://api.deepseek.com/anthropic","ANTHROPIC_AUTH_TOKEN":"sk-ds-9","ANTHROPIC_MODEL":"","ANTHROPIC_DEFAULT_OPUS_MODEL":"","ANTHROPIC_DEFAULT_HAIKU_MODEL":"","API_TIMEOUT_MS":""},"attribution":{},"model":"","theme":"","modelPicker":{"replaceBuiltInOptions":false,"options":[]}}
+== ANTHROPIC_/CLAUDE_ env

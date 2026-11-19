@@ -1,0 +1,4 @@
+== argv (2)
+  [1] --settings
+  [2] {"env":{"ANTHROPIC_BASE_URL":"https://example.work","ANTHROPIC_AUTH_TOKEN":"sk-test-123","ANTHROPIC_DEFAULT_SONNET_MODEL":"work-sonnet","ANTHROPIC_DEFAULT_SONNET_MODEL_NAME":"Work Sonnet","ANTHROPIC_MODEL":"","ANTHROPIC_DEFAULT_OPUS_MODEL":"","ANTHROPIC_DEFAULT_HAIKU_MODEL":"","API_TIMEOUT_MS":""},"attribution":{},"model":"","theme":"","modelPicker":{"replaceBuiltInOptions":true,"options":[{"model":"sonnet","label":"Sonnet · Work Sonnet","description":"Work · work-sonnet"}]}}
+== ANTHROPIC_/CLAUDE_ env
