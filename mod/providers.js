@@ -1,9 +1,38 @@
 // herdr-provider-menu — read cc-switch's provider store, build per-launch argv.
 // Idea-level reference only (cc-switch & ccs, both MIT; no code copied): DESIGN.md §8.
-import { exec, home, readTextFile } from "herdr";
+import { exec, home, readTextFile, shared } from "herdr";
 
 /// shared() key for the last good read (menu opens instantly, then re-checks).
 export const CACHE = "provider-menu.claude";
+
+/// shared() key for per-machine persistent extra argv ("" = this machine).
+/// Explicit by design — the mod never adds flags itself (DESIGN.md §4.1);
+/// this is the person's recorded choice, visible in the panel and in argv.
+export const EXTRA = "provider-menu.extraArgs";
+
+/// Shell-lite split for the extras string: whitespace-separated, single or
+/// double quotes group (the same shape cc-switch's dialog input parses).
+export function splitArgs(text) {
+  const out = [];
+  for (const m of String(text ?? "").matchAll(/"([^"]*)"|'([^']*)'|(\S+)/g))
+    out.push(m[1] ?? m[2] ?? m[3]);
+  return out;
+}
+
+/// shared() key for the per-machine "resolve claude through the shell
+/// profile" mode ("" = this machine). Word-vector launches (herdr runs argv
+/// as "$@" words) resolve FUNCTIONS but never ALIASES — aliases expand only
+/// while the shell parses a command string, not on expansion results. The rc
+/// mode builds that string (bash -[l]ic; -lic when a login rc file exists —
+/// the upstream PR farion1231/cc-switch#9015/#9013 trick), so both apply.
+/// In rc mode the profile IS the trust boundary: it runs before claude and
+/// may export over what env -u cleaned.
+export const RC = "provider-menu.rcLaunch";
+
+/// Single-quote wrap with the '\'' escape — safe for arbitrary bytes.
+function shellQuote(word) {
+  return "'" + String(word).replace(/'/g, "'\\''") + "'";
+}
 
 /// Env names that would redirect claude to another identity; unset per launch
 /// because settings.json's env block can only set, never unset. Names are facts;
@@ -81,8 +110,15 @@ export async function readProviders(machine) {
 /// Per-launch argv for claude (Unix; Windows is Phase 2, DESIGN.md §4.2).
 /// Takes the FINAL settings (launchSettings output). Never adds
 /// --dangerously-skip-permissions: extra args are the caller's choice.
-export function claudeArgv(settings, extra = []) {
+/// rc = {login} switches to the profile-following form: a shell-quoted
+/// command string under bash -[l]ic, so the person's aliases AND functions
+/// resolve claude (word vectors carry functions only). env -u still wraps it.
+export function claudeArgv(settings, extra = [], rc = null) {
   const unset = UNSET.flatMap(u => ["-u", u]);
+  if (rc) {
+    const line = ["claude", "--settings", JSON.stringify(settings), ...extra].map(shellQuote).join(" ");
+    return ["env", ...unset, "bash", rc.login ? "-lic" : "-ic", line];
+  }
   return ["env", ...unset, "claude", "--settings", JSON.stringify(settings), ...extra];
 }
 
@@ -91,9 +127,19 @@ export function claudeArgv(settings, extra = []) {
 // (terminal_launch.rs write_claude_config + live/project/claude.rs
 // terminal_model_picker). The temp --settings file stacks ON the user-level
 // settings.json with env merged per key and top-level keys overridden per key:
-// keys only the live file has would survive into this terminal, so they are
-// written here as empty values. Empty string reads as unset (claude 2.1.314,
-// upstream field test: placeholder creds stop being sent).
+// keys only the live file has would survive into this terminal. Env keys are
+// blocked as "" (empty reads as unset, claude 2.1.314+; verified T2/T8).
+// Top-level blocking is a WHITELIST (TOP_DROPS): claude validates some
+// top-level keys as enums — autoUpdatesChannel rejected "" on a real mac
+// (2026-11-19) and ONE invalid value makes it discard the whole settings
+// file, silently falling the terminal back to the live identity. Any other
+// live-only top-level key inherits from live: those are machine preferences,
+// and guessing an empty value risks the entire file. modelPicker is always
+// written: it wins wholesale per level, so a live one must never leak through.
+
+/// Top-level keys blocked with same-shape empties: T8-verified safe as empty
+/// values, and identity-relevant (model routing, terminal look, picker note).
+const TOP_DROPS = ["model", "theme", "attribution"];
 
 /// The /model menu for a per-launch terminal: only tiers this card explicitly
 /// configured (a leaked picker would offer another provider's models here);
@@ -127,10 +173,10 @@ function modelPicker(env, providerName) {
 }
 
 /// Final per-launch settings = merged card + leak blocks + modelPicker.
-/// Blocks: every key the live user settings have and this card doesn't —
-/// env keys as "", top-level keys as same-shape empties (numbers/bools are
-/// left to inherit, as upstream does). modelPicker is always written: it wins
-/// wholesale per level, so a live one must never leak through.
+/// Blocks: live-only env keys as "" (empty reads as unset), and live-only
+/// TOP_DROPS keys as same-shape empties (verified safe). Every other live-only
+/// top-level key inherits — machine preferences, and an unverified empty value
+/// could invalidate the whole file (autoUpdatesChannel incident, 2026-11-19).
 export function launchSettings(provider, liveText) {
   const ours = JSON.parse(JSON.stringify(provider.settings ?? {}));
   if (!ours.env || typeof ours.env !== "object" || Array.isArray(ours.env)) ours.env = {};
@@ -140,7 +186,7 @@ export function launchSettings(provider, liveText) {
       if (k === "env") {
         if (v && typeof v === "object" && !Array.isArray(v))
           for (const name of Object.keys(v)) if (!(name in ours.env)) ours.env[name] = "";
-      } else if (!(k in ours)) {
+      } else if (TOP_DROPS.includes(k) && !(k in ours)) {
         if (typeof v === "string") ours[k] = "";
         else if (v && typeof v === "object") ours[k] = Array.isArray(v) ? [] : {};
       }
@@ -153,10 +199,22 @@ export function launchSettings(provider, liveText) {
 /// The launch argv for one provider on one machine: read that machine's live
 /// user settings first (unreadable → no blocks, upstream warns and proceeds
 /// the same way). Relative path on remote (its home), absolute locally.
+/// Appends the person's per-machine extra args (EXTRA, splitArgs) after any
+/// caller-given ones. Dynamic env conventions live in the rc mode (RC key):
+/// the profile is the general mechanism, the mod hardcodes none.
 export async function launchArgv(provider, extra = [], machine = null) {
+  const mine = splitArgs(String((shared(EXTRA) ?? {})[machine ?? ""] ?? ""));
+  let rc = null;
+  if ((shared(RC) ?? {})[machine ?? ""]) {
+    // A login rc file present → -lic (macOS keeps aliases in .bash_profile,
+    // which plain -ic never reads — upstream issues #9013/#9015).
+    let login = false;
+    try { await readTextFile(machine ? ".bash_profile" : home() + "/.bash_profile", { on: machine }); login = true; } catch {}
+    rc = { login };
+  }
   let liveText = null;
   try {
     liveText = await readTextFile(machine ? ".claude/settings.json" : home() + "/.claude/settings.json", { on: machine });
   } catch { /* no live file (fresh home) or unreadable: launch without blocks */ }
-  return claudeArgv(launchSettings(provider, liveText), extra);
+  return claudeArgv(launchSettings(provider, liveText), [...extra, ...mine], rc);
 }

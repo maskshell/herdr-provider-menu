@@ -2,7 +2,8 @@
 // provider submenu on the Claude Code row. Install over a mod.clone of
 // new-menu named agent-menu; providers.js travels unchanged with it.
 // Differences from the shipped new-menu: the Claude row grows a ▸ and opens
-// an inline submenu (Default = live slot, then cc-switch providers), digits
+// an inline submenu (this machine's cc-switch cards — every entry an explicit
+// identity; the plain live-slot launch stays on the top-level digit), digits
 // scope to the open layer, and Esc tries to retreat one layer (T4).
 import { View, div, svg, image } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
@@ -93,7 +94,7 @@ export default class AgentMenu extends View {
   }
 
   /// The Claude row: click toggles the submenu instead of launching (the
-  /// Default sub-row and digit keys keep the plain live-slot launch).
+  /// top-level digit still launches the plain live slot).
   agentRow(a, i) {
     const t = theme();
     const open = this.sub === SUBMENU_KEY;
@@ -121,12 +122,14 @@ export default class AgentMenu extends View {
       .child(div().text_size(11).text_color(t.dim).child(hint));
   }
 
-  /// Rows under the Claude row: Default (live slot) + cc-switch providers.
-  subList(a, space) {
+  /// Rows under the Claude row: this machine's cc-switch cards, explicit
+  /// identities only — no opaque "default" row (2026-11-19: a pointer to
+  /// whatever the live slot happens to be is never as clear as a named card,
+  /// and the plain launch already lives on the top-level digit). Never
+  /// silently empty: no cards → an honest hint row (DESIGN §4.5).
+  subList() {
     const t = theme();
-    const rows = [this.subRow("sub-default", "Default (live)",
-      () => { closeOverlay(props().overlay); run("tab.new", { name: a.name, space: space?.id, argv: a.run }); },
-      "1")];
+    const rows = [];
     if (this.note) {
       const hint = /sqlite3|not found|no such file|cannot start/i.test(this.note)
         ? "sqlite3 is missing on this machine"
@@ -140,9 +143,13 @@ export default class AgentMenu extends View {
       rows.push(h_flex().id("sub-loading").h(27).pl(28).pr(9).items_center().flex_none()
         .text_size(12.3).text_color(t.dim).child("Reading cc-switch…"));
     }
+    else if (this.providers.length === 0) {
+      rows.push(h_flex().id("sub-empty").h(27).pl(28).pr(9).items_center().flex_none()
+        .text_size(12.3).text_color(t.dim).child("No providers in cc-switch yet — add one there, then reopen"));
+    }
     else {
       this.providers.forEach((p, i) => {
-        const n = i < 8 ? String(i + 2) : "";
+        const n = i < 9 ? String(i + 1) : "";
         if (p.launchable === false) {
           rows.push(this.subRow("sub-" + i, p.name, cx => {
             this.launchNote = p.name + " is not an env-form API card (official or routed?) — switch to it in cc-switch, not here.";
@@ -161,7 +168,8 @@ export default class AgentMenu extends View {
     const space = spaces().find(s => s.active);
     const installed = this.agents.filter(a => a.installed);
     const choices = this.failed ? installed : [...installed, ...this.agents.filter(a => !a.installed).slice(0, 2)];
-    const extra = this.sub ? 27 * (1 + (this.note || this.providers === null ? 1 : (this.providers?.length ?? 0))) + (this.launchNote ? 44 : 0) : 0;
+    const subRows = this.note || this.providers === null || (this.providers?.length ?? 0) === 0 ? 1 : this.providers.length;
+    const extra = this.sub ? 27 * subRows + (this.launchNote ? 44 : 0) : 0;
     return v_flex().min_h(0).w_full().h(Math.min(491, 167 + Math.max(1, choices.length + (this.failed ? 1 : 0)) * 31 + extra)).bg(t.popover).p(5).text_size(12.8)
       .id("agent-menu").track_focus(this.handle)
       .on_key_down((e, cx) => {
@@ -175,17 +183,10 @@ export default class AgentMenu extends View {
         if (!/^[1-9]$/.test(e.key)) return;
         const n = Number(e.key);
         if (this.sub) {
-          // Digits scope to the open submenu: 1 = Default, 2.. = providers.
-          const rows = [{ d: true }, ...(this.providers ?? [])];
-          const pick = rows[n - 1];
+          // Digits scope to the open submenu: 1.. = providers.
+          const pick = (this.providers ?? [])[n - 1];
           if (!pick) return;
-          if (pick.d) {
-            const a = installed.find(x => x.key === SUBMENU_KEY);
-            if (!a) return;
-            closeOverlay(props().overlay);
-            run("tab.new", { name: a.name, space: space?.id, argv: a.run });
-          }
-          else if (pick.launchable === false) {
+          if (pick.launchable === false) {
             this.launchNote = pick.name + " is not an env-form API card (official or routed?) — switch to it in cc-switch, not here.";
             cx.notify();
           }
@@ -204,7 +205,7 @@ export default class AgentMenu extends View {
           if (a.key !== SUBMENU_KEY || !a.installed)
             return [this.row(a.key, a.tint ? svg(a.icon).size(14).text_color(t.foreground) : image(a.icon).size(14), a.name,
               () => run("tab.new", { name: a.name, space: space?.id, argv: a.run }), a.installed ? (i < 9 ? String(i + 1) : "") : "not installed", a.installed)];
-          return [this.agentRow(a, i), ...(this.sub ? [this.subList(a, space)] : [])];
+          return [this.agentRow(a, i), ...(this.sub ? [this.subList()] : [])];
         }))
         .when(this.launchNote, el => el.child(div().id("launch-note").px(9).py(4).text_size(11.5).text_color(t.dim).child(this.launchNote)))
         .when(this.failed || this.agents.length === 0, el => el.child(div().px(9).py(6).text_color(t.dim).child(this.failed ? "Could not check installed agents" : "Checking installed agents…"))))

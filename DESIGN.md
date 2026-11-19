@@ -46,7 +46,7 @@
 
 **live 槽位语义(2026-11-19 核实)**:cc-switch 的"切换"就是把选中 provider写进 live 客户端文件(claude → `~/.claude/settings.json`;`services/provider/ live.rs:1-3` 只分发,写入引擎在 `claude_direct.rs`),DB 的 `is_current` 镜像它。所以**不走本 mod 的默认 claude 启动 = live 槽位的身份**——cc-switch 机器上就是`is_current` 那个 provider;本 mod 的行是"仅此终端"的覆盖,不动 live。独立目录(官方账号)与临时 `--settings` 启动模式不碰 live 文件。
 
-**无头机缺口(2026-11-19 核实)**:cc-switch 是纯 Tauri GUI(`main.rs` 无 CLI子命令;`lightweight.rs` 是托盘模式,仍需图形会话),无 CLI/无头模式。mod 只需DB **文件**、不需 cc-switch 运行,但无头机上"谁建库/谁改库"没有正主:现实路径是一次性 seed(按 `database/schema.rs` 的 DDL 手工建,含 `id`/`created_at` 等全列;后续 GUI 打开兼容性待验 → REVIEW T9)、或 GUI 机改完拷库(会漂移)。长期正解是给上游提 CLI/headless 需求(ccs 的存在即此缺口)。
+**无头机缺口(2026-11-19 核实)**:cc-switch 是纯 Tauri GUI(`main.rs` 无 CLI子命令;`lightweight.rs` 是托盘模式,仍需图形会话),无 CLI/无头模式。mod 只需DB **文件**、不需 cc-switch 运行,但无头机上"谁建库/谁改库"没有正主。**边界声明(2026-11-19):DB 的供给与同步归用户自行解决(cc-switch 官方 WebDAV 同步等),不在本 mod 与 herdr 的业务范畴**;`seed-cc-switch-db.py` 仅为验证工具——按 `database/schema.rs` 的 DDL 从 spec 造单 provider 测试库(含 `id`/`created_at` 等全列;GUI 打开兼容性待验 → REVIEW T9),不是正式建库方式;GUI 机改完拷库会漂移,同样不算正路。长期正解仍是给上游提 CLI/headless 需求(ccs 的存在即此缺口)。
 
 **为什么核心零改动**(herdr-app AGENTS.md 三问,全否): app 不依它行动(只在启动瞬间机械传参)、不是只有 app 看得见(mod 用`exec`/`run` 即可)、mod 小心就能做对。属于 mods,即使代价是重复。
 
@@ -86,11 +86,19 @@ run("tab.new", {
 - ⚠ **live settings.json 的逐键合并泄漏(2026-11-19 发现;修法已从上游拿到实测配方,T8 降为复验)**: `--settings`(CLI 档)优先级高于 `~/.claude/settings.json`(用户档), 但合并是**逐键**的——live 文件里未被本 provider 覆盖的键会存活。上游 `terminal_launch.rs:1088` 注释原话证实前提:"这个文件叠在用户级 `settings.json` 上:`env` 按键合并、顶层按键覆盖"。泄漏分两层:env 键 (如 live=GLM 的 `ANTHROPIC_MODEL` 泄进 DeepSeek 启动、auth 键名错位双活) 与**顶层键**(live 的顶层 `model`/`modelPicker` 同样逐键存活)。`env -u` 管不了:settings env 是 claude 进程内读档后自己 set 的。 **上游配方(`write_claude_config`,直接采用)**:
   1. `drops` = 切到这张卡时 live 会清掉的键 = live 有而本卡没有的键(launch 时 `readTextFile` 读 live,与合并后的 provider settings 做 diff, 零状态可算);
   2. drops 的 **env 键置 `""`** 挡住——"Claude Code 把空串当没设(2.1.314 实测:代理的占位凭据不再随请求发出,没配的档位回到内置模型)";
-  3. drops 的**顶层键置空值**(串→`""`、对象→`{}`、数组→`[]`);
+  3. drops 的**顶层键白名单置空**(仅 `model`/`theme`/`attribution`,T8 实测空值安全;2026-11-19 实机修订:枚举校验键写 `""` 会使**整个** settings 文件被弃——`autoUpdatesChannel` 事件,过程见 REVIEW Pass 8;其余 live-only 顶层键**继承**——机器偏好,继承即正确语义,且与上游实测 drops 窄集一致);
   4. **`modelPicker` 必须总是写**(整键按层级胜出,不写则路由/聚合模式的菜单漏进本终端,选了就把别家模型发给这张卡)——由卡的 env + 名称生成。
 
 T8 剩余工作:在当前 claude 版本复验空串语义;T6 未暴露的原因:sandbox fresh home 无 live 文件。
 - **明确不继承 ccs 的默认**:**绝不默认 `--dangerously-skip-permissions`**。extra 参数由用户显式给。
+- **rc 遵从路线(2026-11-19 记录,考虑过、暂不取,有复评条件)**:让启动走 shell 函数/alias(如用户 `claude()` 内带 `--allow-dangerously-skip-permissions`)在 herdr 里机械可行——包装 shell 本就 source rc(`window.rs:114-118` "after their rc files"),挡路的只是我们自己的 `env -u` 前缀把 `claude` 放进了参数位。上游参考实现 = farion1231/cc-switch PR #9015(本仓作者提,open 待审):**赋值前缀(`NAME=value … claude`)保持程序在命令位**使 alias/函数展开 + macOS 按 `.bash_profile` 存在与否选 `-lic`/`-ic`(修 #9013);上游同期的产品答案是开终端弹窗的勾选框+参数框,launch-args 需求另见其 #2508/#9008。**不取的原因**:本 mod 的 UNSET×14 是 unset 型需求,赋值前缀只能 set——去掉 env 前缀则 `USE_BEDROCK/VERTEX/GATEWAY` 等认证路径开关(settings 挡不到)从导出环境漏入;字符串化 argv 则引号/注入面 + 逐词审计性全失。**复评触发**:若 claude 演进使 settings env `""` 可证覆盖这些路由键,env 前缀可退役,rc 遵从随之免费获得。
+- **extra-args(2026-11-19 定;同日修订)**:静态旗子(`--allow-…` 等)= **per-machine 持久 extras**:`shared("provider-menu.extraArgs")["<machine>|"""]`,面板 footer `args` 行常显 + 一键自绘 dialog 编辑(InputState/Input,shipped prompt mod 范式),shell-lite 引号分词(splitArgs),面板与子菜单统一经 `launchArgv` 追加。曾同时引入 `env.workspaceFolder = SpaceInfo.folder` 注入,**同日撤除**——workspaceFolder 是用户的举例而非 mod 需求,动态 env 的通用机制是 rc 遵从模式;公开参考 mod 不携带未被要求的 env 注入,与"砍 Default 行/白名单挡键"同一原则(显式 > 环境暗示)。三种路线各有所长:上游 dialog = 每 session 自由(每次重打、装不下动态 env);shell rc 遵从 = 动态 env(藏 rc、要拆 env 前缀);本设计 = 持久免打(不 per-session——dialog 架构留 `props.mode="launch"` 一态可补)。ADR"绝不默认"不变:extras 是用户的显式记录,面板与 argv 双可见。
+- **rc 遵从启动模式(2026-11-19,opt-in)**:面板 `rc` 行每机开关。开启后 argv 变为 `env -u …×14 bash -[l]ic '<shellQuote 包裹的 claude --settings …>'`——命令串经 interactive shell 解析,**alias 与 function 都生效**(词向量只能带函数:alias 仅在解析期展开,参数展开产物不重扫——用户当年 alias→function 迁移的同因)。`-lic` 当且仅当该机存在 `.bash_profile`(PR #9015/#9013 的文件探测智慧);shellQuote = 单引号包裹 + `'\''` 转义,任意字节安全。**信任边界照实声明**:rc 模式下 profile 即信任边界——它先于 claude 运行,可重新 export 被 env -u 清掉的变量;rc 双 source(herdr 包装 + 内层 bash)通常无害。用户实形(两种等价,`command` 防递归,`$(pwd)` 在解析期求值——rc 模式下两者皆通):
+  ```
+  alias claude='workspaceFolder="$(pwd)" CLAUDE_CODE_ATTRIBUTION_HEADER=0 command claude --allow-dangerously-skip-permissions'
+  claude() { workspaceFolder="$(pwd)" CLAUDE_CODE_ATTRIBUTION_HEADER=0 command claude --allow-dangerously-skip-permissions "$@"; }
+  ```
+  `CLAUDE_CODE_ATTRIBUTION_HEADER` 不在 UNSET×14,无冲突;本设计曾同日注入 `env.workspaceFolder`(SpaceInfo.folder),后撤除——个例不应成为公开 mod 的静默行为,动态 env 的通用机制即本模式。默认关:公开参考形态保持词向量纯度,rc 遵从是显式选择。
 - **token 暴露面(已接受)**:settings JSON 内联在 argv,`/proc/PID/cmdline`可见;静态存储始终只有 cc-switch DB 一份。本地可选后续(2026-11-19 升级为已验证配方):settings 临时文件 + 0600 + 退出即删——上游隔离终端即此做法(`terminal_launch.rs:342` 临时文件 0600 读完即删、`:1086` 含凭据文件 0600),移植路径 = `writeTextFile` + `exec chmod 0600` + 包装 argv 在 claude 退出后自删(Phase 3,想收就收)。
 
 ### 4.2 后续相位
@@ -124,7 +132,7 @@ T8 剩余工作:在当前 claude 版本复验空串语义;T6 未暴露的原因:
 
 **卡的可携性判据(2026-11-19 补)**:身份库 vs 路由表管"能不能当源";env 形与否管"能不能启动";**端点是否机器无关管"能不能跟着同步走"**——env 形+公网端点的卡完全可携;localhost 网关卡(magpie/litellm 类)需目标机有同服务,端点改写机器无关地址(局域网 IP/Tailscale 主机名)即可携;OAuth 账号卡与路由/聚合产物不可携(T10)。源机模式与可携性无关(mode 不同步、DB 无模式)。
 
-**上游 asks 清单(2026-11-19 定,共三条,提 issue 时引本地 clone 源码行号)**:① API 卡走账号目录(= §4.3 选项 C;成了可删整个 T8 挡键机制);② headless/CLI(cc-switch 无 CLI,无头机只能 seed,§2 已记);③ **可配置终端启动器**——上游「以此供应商打开终端」是固定终端清单、无自定义命令模板(`terminal_launch.rs:1142-1146` macOS / `:1499-1506` Linux);成了 → cc-switch 可把隔离终端直接开进 herdr(`herdr-app do tab.new` 即现成落点),本 mod 三层克隆可退位。
+**上游 asks 清单(2026-11-19 定,共三条,提 issue 时引本地 clone 源码行号)**:① API 卡走账号目录(= §4.3 选项 C;成了可删整个 T8 挡键机制);② headless/CLI(cc-switch 无 CLI,无头机的建库/同步缺官方通道,DB 供给现归用户自行解决,§2 已记);③ **可配置终端启动器**——上游「以此供应商打开终端」是固定终端清单、无自定义命令模板(`terminal_launch.rs:1142-1146` macOS / `:1499-1506` Linux);成了 → cc-switch 可把隔离终端直接开进 herdr(`herdr-app do tab.new` 即现成落点),本 mod 三层克隆可退位。
 
 **选项**:
 - **A(现状,已按此实现)**:`--settings` 身份启动 + drops 挡键/必写modelPicker(上游 `write_claude_config` 配方,见 §4.1)。mod 保持读+ 启动零状态。

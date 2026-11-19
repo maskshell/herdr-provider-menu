@@ -1,6 +1,6 @@
 # herdr-provider-menu
 
-Launch Claude Code in herdr terminals under a **cc-switch-managed provider identity**: one identity per terminal, parallel terminals never cross-talk, no global config touched. Codex and other CLIs later (Phase 2).
+Launch Claude Code in herdr terminals under a **cc-switch-managed provider identity**. Each terminal gets one identity. Parallel terminals do not cross-talk. Global configuration stays untouched. Codex and other CLIs come in Phase 2.
 
 ```
 cc-switch (config truth: GUI editing / WebDAV sync)
@@ -12,29 +12,31 @@ this mod (stateless: read → merge → launch)
 a herdr-tracked terminal (OSC 7501 status, notifications, agents list as usual)
 ```
 
-It uses herdr's two sanctioned extension paths — new docked mods, and clones of shipped mods ("duplicate a shipped layout or mod before changing its structure or code") — to bring cc-switch's identity store onto herdr's execution surface. 中文文档: [README.zh-CN.md](README.zh-CN.md).
+The mod uses the two extension paths that herdr documents: a new docked mod, and a clone of a shipped mod. herdr's rule: duplicate a shipped layout or mod before changing its structure or code. The mod connects cc-switch's identity store to herdr's execution surface. 中文文档: [README.zh-CN.md](README.zh-CN.md).
 
-**Status (2026-11-19)**: design converged (DESIGN.md, ADRs 1–10). Phase 0 (docked panel) and Phase 1 (three-layer clone: agent-menu submenu + my-tabs + personal layout) both pass sandbox E2E — panel render, click and digit-key launches with the full argv, leak-blocking 26/26 assertions (T8), non-env providers refused with a note (T10), T4 settled (Esc interception is not possible; one Esc closes the menu, digit keys are per-layer). T1 (WAL concurrent reads) and T2 (settings-env precedence, against real claude 2.1.327) verified. Remaining: T5 real-remote E2E, T9 GUI-open half, Windows (Phase 2). Evidence in `evidence/`, process in REVIEW.md.
+**Status (2026-11-19)**: design converged (DESIGN.md). Phase 0 (docked panel) and Phase 1 (three-layer clone: agent-menu submenu, my-tabs, personal layout) pass sandbox E2E. Panel render; launch by click and by digit key, with the full argv; leak-blocking with 26/26 assertions (T8); refusal of non-env providers with a note (T10); T4 closed — Esc interception is not possible, so one Esc closes the menu and digit keys act per layer. T1 (WAL concurrent reads) and T2 (settings-env precedence, against real claude 2.1.327) are verified. Remaining: T5 real-remote E2E, the T9 GUI-open half, Windows (Phase 2). Evidence: `evidence/`. Process: REVIEW.md.
 
 ## How it works
 
-- Reads each machine's own `~/.cc-switch/cc-switch.db` with `sqlite3 -readonly -json` over `exec {on: machine}` — no DB copies, safe under an active WAL writer (T1).
-- Merges the provider profile over the live `~/.claude/settings.json` with drop-blocking: live-only env keys are written `""` (claude treats empty as unset, verified on 2.1.327) and `modelPicker` is always written so routing/aggregation menus never leak in (T8 — the same recipe cc-switch's own isolated-terminal launcher uses).
-- Launches `env -u …×14 claude --settings <inline json>` so the identity is frozen per terminal and the terminal stays fully herdr-tracked.
-- Non env-form providers (official OAuth accounts, routed contract cards) are greyed out and refuse to launch with an honest note (T10).
+- The mod reads the machine's own `~/.cc-switch/cc-switch.db` with `sqlite3 -readonly -json` over `exec {on: machine}`. It makes no DB copies. The read is safe under an active WAL writer (T1).
+- The mod merges the provider card over the live `~/.claude/settings.json`. Env keys that only the live file has are written `""`; claude treats an empty value as unset (verified on 2.1.327). The mod always writes `modelPicker`, so routing and aggregation menus do not leak in (T8; cc-switch's own isolated-terminal launcher uses the same recipe).
+- The mod launches `env -u …×14 claude --settings <inline json>`. The identity is frozen per terminal. The terminal stays fully herdr-tracked.
+- Non env-form providers (for example official OAuth accounts and routed contract cards) show grey and refuse to launch. A note states the reason (T10).
+- The panel has an `args` row for each machine. The row stores extra arguments, for example `--allow-dangerously-skip-permissions`. The mod appends these arguments to every launch, from the panel and from the submenu. The user records the arguments; the mod adds no flags by itself. The record stays visible in the panel and in the launch argv.
+- The panel has an `rc profile` row for each machine. The mode is off by default. When the mode is on, the launch becomes a `bash -[l]ic` command string, and the shell profile resolves `claude`. Shell aliases and shell functions both apply. Example: a `claude()` function that sets an environment variable or appends flags also applies to mod launches. In rc mode the profile is the trust boundary: it runs before claude and can change the environment.
 
 ## Security — read before installing
 
-herdr mods are trusted code, not sandboxed extensions. This one handles credentials; its posture:
+herdr mods are trusted code, not sandboxed extensions. This mod handles credentials. Its posture:
 
-- Reads the cc-switch DB and the live settings (to compute drop keys) **readonly**; it never writes either.
-- Tokens travel inline in the launch argv (`/proc/PID/cmdline` visible) — an accepted trade-off; the only static copy stays in the cc-switch DB. The stricter temp-file + 0600 recipe (as upstream's launcher uses) is a planned Phase 3 option.
-- Never inherits or adds `--dangerously-skip-permissions`; extra args are explicit only.
-- Leak-blocking is tested end-to-end: 26/26 assertions in sandbox (T8), re-verified against real claude 2.1.327 (T2).
+- The mod reads the cc-switch DB and the live settings file readonly, to compute drop keys. It never writes these files.
+- Tokens travel inline in the launch argv and are visible through `/proc/PID/cmdline`. This trade-off is accepted. The only static copy stays in the cc-switch DB. The stricter recipe — temp file, mode 0600, deleted on exit, as upstream's launcher uses — is a Phase 3 option.
+- The mod never inherits and never adds `--dangerously-skip-permissions`. A flag enters a launch in one way only: the user records it in the `args` row. The record stays visible.
+- Leak-blocking is tested end to end: 26/26 assertions in sandbox (T8), re-verified against real claude 2.1.327 (T2).
 
 ## Install
 
-Machine roles: the GUI machine (running the herdr-app window) gets the mods; machines that only run core/claude need nothing but the DB — the mod reads each machine's own DB over machine exec, and headless machines seed it with `scripts/seed-cc-switch-db.py`.
+Machine roles: the GUI machine (the machine that shows the herdr-app window) gets the mods. A machine that only runs core and claude needs only the DB: the mod reads that machine's own `~/.cc-switch/cc-switch.db` over machine exec. DB provisioning and sync are the user's responsibility and outside this mod's scope — use cc-switch's own sync (WebDAV), or configure the machine once from a cc-switch GUI. `seed-cc-switch-db.py` is a verification tool, not a provisioning path.
 
 ### GUI machine (three-layer submenu)
 
@@ -42,29 +44,27 @@ Machine roles: the GUI machine (running the herdr-app window) gets the mods; mac
 git clone https://github.com/maskshell/herdr-provider-menu && cd herdr-provider-menu
 herdr-app do mod.clone '{"name":"new-menu","as":"agent-menu"}'
 herdr-app do mod.clone '{"name":"tabs","as":"my-tabs"}'
-herdr-app do layout.clone '{"name":"main"}'    # if you have no personal layout yet; switch to it in the app
-sh scripts/p1-install.sh                        # overlays sources + patches tabs in your personal layouts (idempotent)
+herdr-app do layout.clone '{"name":"main"}'    # run when no personal layout exists yet; switch to the clone in the app
+sh scripts/p1-install.sh                        # overlays sources + patches the tabs block in personal layouts (idempotent)
 ```
 
-Then fully quit and reopen Herdr — cloned-mod overlays load after a restart. When testing against an isolated home, pass `HERDR_APP_HOME=<dir>` to the script. Manual equivalent: after the two `mod.clone`s, copy `agent-menu/{main.js,providers.js,mod.json}` and `my-tabs/main.js` into the matching `~/.config/herdr-app/mods/` clones, and change `"mod": "tabs"` to `"my-tabs"` in your layout json.
+Then fully quit and reopen Herdr: overlaid sources load at start. To test against an isolated home, pass `HERDR_APP_HOME=<dir>` to the script. Manual equivalent: after the two `mod.clone`s, copy `agent-menu/{main.js,providers.js,mod.json}` and `my-tabs/main.js` into the clones under `~/.config/herdr-app/mods/`, then change `"mod": "tabs"` to `"my-tabs"` in the personal layout file.
 
-After install: the tab-bar `+` opens agent-menu; the Claude Code row grows an inline provider submenu — Default is the live slot, then this machine's cc-switch providers; grey rows are non env-form and explain themselves. Digit keys act per layer; one Esc closes the whole menu (app-level binding, REVIEW Pass 7/T4).
+After install: the tab-bar `+` opens agent-menu. The Claude Code row shows an inline submenu with this machine's cc-switch cards; every entry is an explicit identity. The current card carries the `current` badge. Grey rows are non env-form; a click shows an explanation note instead of a launch. The plain live-slot launch stays on the top level — with the submenu closed, the Claude row's digit key starts claude as-is. Digit keys act per layer (in the submenu, 1.. pick providers). One Esc closes the whole menu (app-level binding; REVIEW Pass 7/T4).
 
 ### Optional Phase 0 side panel
 
-`cp -r mod/ ~/.config/herdr-app/mods/provider-menu/` — docks into personal layouts at 280px. Or copy `layouts/main-providers.json` to `~/.config/herdr-app/layouts/` for a ready-made layout with the panel docked.
+Copy `mod/` to `~/.config/herdr-app/mods/provider-menu/`; the panel docks into personal layouts at 280px. As an alternative, copy `layouts/main-providers.json` to `~/.config/herdr-app/layouts/` — that layout comes with the panel docked.
 
 ### Headless / core machines (DB only)
 
-```sh
-python3 scripts/seed-cc-switch-db.py ~/.cc-switch/cc-switch.db --spec <spec.json>
-```
+Real use: bring the DB to the machine through cc-switch's own sync (WebDAV), or configure the profiles once from a machine with the cc-switch GUI. Include the `CLAUDE_CODE_*` tuning keys in each profile — they are per-provider (see REVIEW.md Pass 7). The machine needs a system `sqlite3`; when it is missing, the menu shows an install hint instead of an empty list.
 
-The spec's `providers[].settings` is the **full env set** of that machine's live `~/.claude/settings.json` — including the `CLAUDE_CODE_*` tuning keys, which are per-provider (see REVIEW.md Pass 7 for the correction) — plus `model`. The machine needs a system `sqlite3`; if it is missing, the menu shows an install hint instead of an empty list.
+Tests only (T9): `python3 scripts/seed-cc-switch-db.py ~/.cc-switch/cc-switch.db --spec <spec.json>` builds a single-provider test DB from a spec (full DDL + user_version).
 
 ## Clone baseline
 
-`agent-menu/` and `my-tabs/` are working copies cloned from herdr-app's shipped `new-menu`/`tabs` at herdr-app `4deb605`, extended here (the submenu layer; a 7-line `+` patch). Shipped mods keep evolving upstream: after a herdr-app update, re-run `mod.clone` and `p1-install.sh` to re-apply. Herdr updates the shipped originals; your clones stay yours.
+`agent-menu/` and `my-tabs/` are working copies, cloned from herdr-app's shipped `new-menu`/`tabs` at herdr-app `4deb605` and extended here (the submenu layer; a 7-line `+` patch). Shipped mods keep evolving upstream. After a herdr-app update, run `mod.clone` and `p1-install.sh` again to re-apply. Herdr updates the shipped originals; user copies stay unchanged.
 
 ## Scripts
 
@@ -72,7 +72,7 @@ The spec's `providers[].settings` is the **full env set** of that machine's live
 |---|---|
 | `t1-wal-test.sh` | WAL-active DB `sqlite3 -readonly` read correctness (5 cases) |
 | `t2-precedence-probe.sh` + `t2-server.py` | real-claude precedence/leak probe (localhost echo server, fake tokens) |
-| `seed-cc-switch-db.py` | seed a cc-switch DB for headless machines (full DDL + user_version, opens in the GUI with zero migrations) |
+| `seed-cc-switch-db.py` | verification tool: build a single-provider test DB from a spec (full DDL + user_version; T9) |
 | `t5-remote-prepare.sh` + `t5-remote-e2e.md` | remote-machine prep + T5 E2E checklist |
 | `p1-install.sh` | three-layer install self-check + repair (idempotent; overlays sources, patches layouts, prints `do` commands for missing clones) |
 
@@ -87,7 +87,7 @@ scripts/sandbox do space.new '{}'
 scripts/sandbox shot
 ```
 
-Never run a bare herdr-app on a machine where you use the app without `HERDR_APP_HOME` pointing at a scratch home. Sandbox ops notes: REVIEW.md Pass 5.
+Never start a bare herdr-app on a machine that also runs a personal herdr setup, unless `HERDR_APP_HOME` points to a scratch home. Sandbox ops notes: REVIEW.md Pass 5.
 
 ## License
 

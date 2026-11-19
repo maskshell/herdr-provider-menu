@@ -2,7 +2,7 @@
 
 > 本文件为中文版；英文版 [README.md](README.md) 为主版本。
 
-herdr 的个人 mod：在终端里按 **cc-switch 管理的 provider 身份**启动 Claude Code（后续：Codex 等）。每个终端一个身份，并行互不串扰，不碰任何全局配置。
+herdr 的第三方 mod：在 herdr 跟踪的终端里，按 **cc-switch 管理的 provider 身份**启动 Claude Code。每个终端一个身份。并行终端互不串扰。全局配置不受影响。Codex 等 CLI 属 Phase 2。
 
 ```
 cc-switch（配置真身：编辑 / WebDAV 同步）
@@ -14,7 +14,9 @@ cc-switch（配置真身：编辑 / WebDAV 同步）
 herdr 跟踪的终端（OSC 7501 状态、通知、agents 列表照常）
 ```
 
-**状态**（2026-11-19）：设计已收敛（DESIGN.md）。Phase 0（docked 面板）与 Phase 1（三层克隆：agent-menu 子菜单 + my-tabs + 个人布局）均已通过 sandbox E2E：面板渲染、点击与数字键启动（完整 argv）、泄漏阻断 26/26 断言（T8）、非 env 形态 provider 拒启带提示（T10）、T4 定论（Esc 拦截不可行——一次 Esc 全关，数字键按层作用域）。T1（WAL 并发读）、T2（settings env 优先级，真 claude 2.1.327 实测）已过。剩余：T5 真远端 E2E、T9 的 GUI 打开复验、Windows（Phase 2）。证据在 `evidence/`，过程在 REVIEW.md。
+本 mod 使用 herdr 文档化的两条扩展路径：新建 docked mod，以及克隆出厂 mod。herdr 的规则：改动结构或代码前，先复制一份出厂布局或 mod。本 mod 把 cc-switch 的身份库接到 herdr 的执行面上。
+
+**状态**（2026-11-19）：设计已收敛（DESIGN.md）。Phase 0（docked 面板）与 Phase 1（三层克隆：agent-menu 子菜单、my-tabs、个人布局）均通过 sandbox E2E。验证项：面板渲染；点击与数字键启动（完整 argv）；泄漏阻断 26/26 断言（T8）；非 env 形态 provider 拒启并给出提示（T10）；T4 定论——Esc 拦截不可行，故一次 Esc 关闭整个菜单，数字键按层生效。T1（WAL 并发读）、T2（settings env 优先级，真 claude 2.1.327 实测）已过。剩余：T5 真远端 E2E、T9 的 GUI 打开半场、Windows（Phase 2）。证据在 `evidence/`，过程在 REVIEW.md。
 
 ## 目录
 
@@ -35,13 +37,13 @@ herdr 跟踪的终端（OSC 7501 状态、通知、agents 列表照常）
 |---|---|
 | `t1-wal-test.sh` | WAL 活跃库 `sqlite3 -readonly` 读取正确性（5 案例） |
 | `t2-precedence-probe.sh` + `t2-server.py` | 真 claude 优先级/泄漏探针（localhost 回显服务器、假 token） |
-| `seed-cc-switch-db.py` | 无头机 seed cc-switch DB（全量 DDL + user_version，GUI 零迁移打开） |
+| `seed-cc-switch-db.py` | 验证工具：从 spec 造单 provider 测试库（全量 DDL + user_version；T9） |
 | `t5-remote-prepare.sh` + `t5-remote-e2e.md` | 远端机准备 + T5 E2E 清单 |
 | `p1-install.sh` | GUI 机三层安装的自检+修复（幂等；覆盖源、打布局补丁、缺克隆时打印 `do` 命令） |
 
 ## 新机安装（从本仓库）
 
-先分清机器角色：**跑 herdr-app 窗口的 GUI 机装 mod；跑 core/claude 的机器只要 DB**（mod 经 machine exec 现场读那台机的 `~/.cc-switch/cc-switch.db`，无头机用 `seed-cc-switch-db.py` 造，装有 cc-switch GUI 的机器不用管）。
+先分清机器角色。**跑 herdr-app 窗口的 GUI 机安装 mod；只跑 core/claude 的机器只需要 DB**：本 mod 经 machine exec 现场读取目标机的 `~/.cc-switch/cc-switch.db`。**DB 的供给与同步由用户自行解决，不在本 mod（及 herdr）的业务范畴**——例如 cc-switch 官方的 WebDAV 同步，或在装有 cc-switch GUI 的机器上配置。`seed-cc-switch-db.py` 是验证工具，不是正式的建库方式。
 
 ```sh
 git clone https://github.com/maskshell/herdr-provider-menu
@@ -53,27 +55,29 @@ git clone https://github.com/maskshell/herdr-provider-menu
 cd herdr-provider-menu
 herdr-app do mod.clone '{"name":"new-menu","as":"agent-menu"}'
 herdr-app do mod.clone '{"name":"tabs","as":"my-tabs"}'
-herdr-app do layout.clone '{"name":"main"}'    # 还没有个人布局时；并在 app 里切过去
-sh scripts/p1-install.sh                        # 覆盖源 + 给所有个人布局打 tabs 补丁（幂等）
+herdr-app do layout.clone '{"name":"main"}'    # 尚无个人布局时执行；随后在 app 里切换到该布局
+sh scripts/p1-install.sh                        # 覆盖源 + 给个人布局打 tabs 补丁（幂等）
 ```
 
-然后**完全退出并重开 Herdr**（mod.clone 后覆盖的源要 restart 才加载）。隔离测试 home 时给脚本传 `HERDR_APP_HOME=<目录>`。手动等价步骤：两个 `mod.clone` 后，`cp agent-menu/{main.js,providers.js,mod.json} ~/.config/herdr-app/mods/agent-menu/`、`cp my-tabs/main.js ~/.config/herdr-app/mods/my-tabs/`，再把布局 json 里 tabs 块的 `"mod": "tabs"` 改 `"my-tabs"`。
+随后**完全退出并重开 Herdr**：覆盖后的源在启动时加载。隔离测试时，给脚本传 `HERDR_APP_HOME=<目录>`。手动等价步骤：两个 `mod.clone` 之后，`cp agent-menu/{main.js,providers.js,mod.json} ~/.config/herdr-app/mods/agent-menu/`、`cp my-tabs/main.js ~/.config/herdr-app/mods/my-tabs/`，再把个人布局文件里 tabs 块的 `"mod": "tabs"` 改为 `"my-tabs"`。
 
-可选 Phase 0 侧栏面板：`cp -r mod/ ~/.config/herdr-app/mods/provider-menu/`（个人布局 dock，280px）；或直接复制 `layouts/main-providers.json` 到 `~/.config/herdr-app/layouts/` 得到带面板的现成布局。
+安装后：标签栏 `+` 打开 agent-menu。Claude Code 行展开内联子菜单，列出该机 cc-switch 中的身份卡；每一条都是显式身份。当前卡带 `current` 徽标。灰显行为非 env 形态：点击显示说明提示，不启动。原样启动（live 槽）保留在顶层——子菜单收起时，按 Claude 行的数字键即原样启动 claude。数字键按层生效（子菜单内 1.. 为 providers）。Esc 一次关闭整个菜单（app 级键绑定；REVIEW Pass 7/T4）。
 
-装好后：标签栏 `+` 打开 agent-menu；Claude Code 行尾 `N ▸`，点击展开 provider 子菜单（Default = live 槽，之后是 cc-switch 里这台机的 providers；灰显行是 endpoint/apiKey 形态，点了给提示不启动）。数字键按层：顶层 1-9 直启已装 agent；子菜单内 1=Default、2..=providers。Esc 一次关整个菜单（app 级键绑定，mod 拦不了——REVIEW.md Pass 7/T4）。
+面板为每台机器提供两个设置行。`args` 行存储持久附加参数（shell 引号分词；例如 `--allow-dangerously-skip-permissions`）。本 mod 把这些参数追加到每次启动，面板与子菜单相同。参数由用户显式记录；本 mod 自身不添加任何旗子。记录在面板与启动 argv 中保持可见。`rc profile` 行默认关闭。开启后，启动变为 `bash -[l]ic` 命令串，由 shell profile 解析 `claude`。alias 与 function 均生效（词向量只能携带函数）。举例：`claude()` 函数中设置环境变量或追加参数，同样作用于本 mod 的启动。rc 模式下，profile 即信任边界——它先于 claude 运行，可以改变环境。
+
+### 可选 Phase 0 侧栏面板
+
+`cp -r mod/ ~/.config/herdr-app/mods/provider-menu/`；面板以 280px 停靠进个人布局。另一方式：复制 `layouts/main-providers.json` 到 `~/.config/herdr-app/layouts/`——该布局自带停靠好的面板。
 
 ### 无头/core 机（只造 DB）
 
-```sh
-python3 scripts/seed-cc-switch-db.py ~/.cc-switch/cc-switch.db --spec <spec.json>
-```
+正式使用：通过 cc-switch 官方同步（WebDAV）把 DB 带到该机，或在装有 cc-switch GUI 的机器上配置一次各 profile。每个 profile 须包含 `CLAUDE_CODE_*` 调优键——它们按 provider 各自配置（见 REVIEW Pass 7）。机器需要系统 `sqlite3`；缺失时菜单显示安装提示，而非空白列表。
 
-spec 的 `providers[].settings` = 该机 live `~/.claude/settings.json` 的 **env 全量**（含 `CLAUDE_CODE_*` 调优——per-provider，见 REVIEW Pass 7"真机 seed 修正"）+ `model`；机器须有系统 `sqlite3`（mod 用 `sqlite3 -readonly -json` 读，缺失时菜单会给装包提示行）。
+仅供测试（T9）：`python3 scripts/seed-cc-switch-db.py ~/.cc-switch/cc-switch.db --spec <spec.json>` 从 spec 造单 provider 测试库（全量 DDL + user_version）。
 
 ## 克隆基线
 
-`agent-menu/`、`my-tabs/` 是从 herdr-app 出厂 `new-menu`/`tabs`（@ `4deb605`）克隆后扩展的工作副本（子菜单层；7 行 `+` 补丁）。出厂件在上游持续更新：herdr-app 升级后重跑 `mod.clone` + `p1-install.sh` 重新套用。出厂件由 Herdr 更新，你的克隆属于你。
+`agent-menu/`、`my-tabs/` 是工作副本，克隆自 herdr-app 出厂 `new-menu`/`tabs`（@ `4deb605`）并在此扩展（子菜单层；7 行 `+` 补丁）。出厂 mod 在上游持续更新。herdr-app 升级后，重新执行 `mod.clone` + `p1-install.sh` 以重新套用。出厂件由 Herdr 更新；用户副本保持不变。
 
 ## 验证（按序）
 

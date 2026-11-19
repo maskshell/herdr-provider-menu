@@ -161,3 +161,35 @@ E2E 中发现并修复的三个问题:
 ## 结论
 
 P1 三层克隆(my-tabs → agent-menu 子菜单)sandbox E2E 全通:弹层、内联provider 子菜单、Work 点击与数字键启动(14×`-u` + `--settings` 全 argv)、RouterX 拒启 note;T4 定论为拦截不可行、fallback 已文档化。E2E 顺带修了三个实现 bug(mod 无热重载认知、灰显行点击守卫、note 高度裁剪)。Tx 系列: T1/T2/T10 ✅,T9 无头半 ✅(GUI 复验待用户),T5 脚本备妥。剩余:T3 (Windows,P2)、T5/T9 真机半场、真 claude 联网复验(用户机)。
+
+## Pass 8 — 实机事件:顶层挡键 × 枚举校验(2026-11-19,macOS GUI 机)
+
+现象:选 DeepSeek 卡启动,claude 弹 Settings Error——`autoUpdatesChannel: Invalid value. Expected one of: "latest","stable","rc"`,"files with errors are skipped **entirely**"。事故链:live settings 有 `autoUpdatesChannel` → 卡没有 → 旧逻辑按"live-only 顶层串键"写 `""` → 枚举校验拒绝 → 整个 `--settings` 被弃,终端静默回落 live 身份(对话框选项 3 即此路径,比报错更危险)。T8 的 26/26 未覆盖此键:sandbox fresh home 的 live 无此键。
+
+修复:`launchSettings` 顶层挡键改白名单 `TOP_DROPS = ["model","theme","attribution"]`(全部 T8 实测空值安全);其余 live-only 顶层键继承。env 块挡键不变(空 env 值=未设,env 名无枚举校验)。`herdr-app check` mod/agent-menu 双过。
+
+上游对照(实机抓取 cc-switch 隔离终端 launcher + temp json):上游 temp 文件**无** `autoUpdatesChannel`——其 drops 为窄集(本次仅 `model:""` + live-only env 键 `CLAUDE_CODE_AUTO_MODE_SERVER:""`),**上游无此 bug,此前"上游同 bug"判断撤销**;白名单修复恰与上游实际语义收敛。上游 launcher 另两个 posture 差异实锤:无 `env -u` 前缀(进程 env 不清)、默认带 `--dangerously-skip-permissions`——本 mod 两者都更严,维持(DESIGN §4.1 立场)。
+
+## Pass 9 — UX 修订:子菜单去 Default 行(2026-11-19,实机反馈)
+
+用户指摘:子菜单的 Default 行没有显式指向(不像 cc-switch 里每项都是命名卡)。裁决:去除。理由:①菜单语义是"选身份",live 槽是指针不是身份,改名显式化不可行(routing 模式 live=127.0.0.1:15721、官方 OAuth 无 base_url 可标);②与顶层数字键冗余(子菜单收起时按 Claude 行数字键即原样启动,键盘路径不变);③鼠标路径有 Terminal 行兜底。顺带补齐零卡 empty-state 行("No providers in cc-switch yet…",§4.5 不静默空白——此前 Default 行占位掩盖了该场景);子菜单数字键改 1..=providers(原 2..)。check 过。
+
+## Pass 10 — extra-args 与 workspaceFolder(2026-11-19)
+
+背景:用户实机必须项 = `workspaceFolder` 动态 env + `--allow-dangerously-skip-permissions`(其个人 `claude()` 函数约定);上游 PR #9015(rc 遵从,open 待审)与上游 dialog(每 session 自由输入)各有优劣——dialog 装不下动态 env,rc 遵从要拆 env -u 前缀(UNSET 承重)。本批设计各走正道:静态旗子 = per-machine 持久 extras(EXTRA key、面板 args 行 + 自绘 dialog 按 shipped prompt mod 的 InputState/Input 范式、splitArgs 引号分词);动态 env = launchSettings 设 `env.workspaceFolder = SpaceInfo.folder`(空则不设,远程机为其本机路径;Pass 12 撤除)。launchArgv 统一接线 `[...extra, ...mine]`,面板与子菜单同享。ADR"绝不默认"不变;dialog 架构留 `props.mode="launch"` 一态可补 per-launch。check:mod/agent-menu 双过;实机复验待 GUI 机(argv 尾部旗子 + settings env 内 workspaceFolder + hooks 读到)。
+
+## Pass 11 — rc 遵从启动模式(2026-11-19,opt-in)
+
+用户核心诉求:启动应读取其 shell profile,不摒弃 alias 与 function(其两种等价实形均以 `workspaceFolder="$(pwd)" CLAUDE_CODE_ATTRIBUTION_HEADER=0 command claude --allow-dangerously-skip-permissions` 为约定)。机制事实:herdr 词向量包装("$@")只解析函数,alias 仅在解析期展开——故完整支持只有命令串形式。实现:RC key(每机开关,面板 rc 行)+ `claudeArgv(settings, extra, {login})` 的 rc 分支(`env -u …×14 bash -[l]ic '<shellQuote>'`,shellQuote=单引号+'\'\''转义)+ `launchArgv` 探测 `.bash_profile` 存在则 `-lic`(PR #9015/#9013 智慧)。信任边界照实:rc 先于 claude 运行、可重新 export 被清变量;rc 双 source 通常无害。CLAUDE_CODE_ATTRIBUTION_HEADER 不在 UNSET×14。路线收束:上游 dialog = 每 session 自由输入;上游 PR #9015 = 同思路的未采纳版;本仓 = 持久 extras(默认)+ rc 遵从模式(opt-in)。check 双过;实机复验:rc 开启后 hc get 应见 `bash -ic 'claude --settings …'` 串,claude 进程 env 有 workspaceFolder/ATTRIBUTION_HEADER,且 extras 与函数旗子并存不冲突。
+
+## Pass 12 — mac 实机复验全绿 + workspaceFolder 注入撤除(2026-11-19)
+
+mac GUI 机复验 extras 与 rc 两条路径无误(args 行持久旗子、rc profile 模式经 bash -lic 命令串、alias/function 均生效)。同日决策:撤除 env.workspaceFolder 注入(Pass 10 同批引入)——workspaceFolder 是用户举例而非 mod 需求,动态 env 的通用机制是 rc 遵从模式;公开参考 mod 不携带未被要求的 env 注入,与"砍 Default 行/白名单挡键"同一原则(显式 > 环境暗示)。用户实跑 rc 模式,函数的 $(pwd) 原生生效,零损失。README 双语仅保留 rc bullet 中的例证提法;launchSettings 回落 (provider, liveText) 签名,providers.js 不再 import spaces。check 双过。
+
+## Pass 13 — 文风统一:STE/STC(2026-11-19)
+
+用户要求:README 面向公众,不用第二人称所有格("your/你的"),示例显式标注(e.g./例如),行文遵循 STE100/STC。处理:两份 README 全文重写——短句单义、主动语态、现在时、术语一致(the mod/本 mod、extra arguments/附加参数、per machine/每机、launch/启动);"your recorded choice"→"the user records the arguments; the mod adds no flags by itself";克隆基线尾句改为陈述式;警告句保留祈使但去第二人称。UI 字符串同步(args dialog 提示句)。DESIGN/REVIEW 为内部工程日志,保持既有文风不在此范围。
+
+## Pass 14 — seed 脚本定位纠偏:验证工具而非建库方式(2026-11-19)
+
+用户指正:README 曾把「无头机用 seed-cc-switch-db.py 造库」写成安装路径,错位——seed 只从 spec(取自当前 live settings)造出单 provider 测试库,无实用供给价值;正式路径是 cc-switch 官方 DB 同步(WebDAV 等)或 GUI 机配置。边界定案:**DB 的供给与同步由用户自行解决,不在本 mod(及 herdr)的业务范畴**。落地:README 双语三处改写(Install 分流"正式使用/仅供测试"、无头机段分两段、scripts 表行改"验证工具");DESIGN §2 无头机缺口段补边界声明,seed 降为验证工具、拷库标注会漂移不算正路、上游 CLI/headless ask 维持。上游三条 asks 不变。
