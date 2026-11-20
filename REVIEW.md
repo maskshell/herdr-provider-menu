@@ -293,3 +293,7 @@ Phase 3 文档初稿把 secret 直译作「秘密」,不合技术习惯;统一�
 ## Pass 39 — Windows 目标模式弹窗拦截(2026-11-20,用户拍板)
 
 T3 前对 Windows 目标显式拦截,优于 spawn 必死终端+神秘 toast。检测:machinePlatform(machine)——本地 window().platform;远端 uname -s 一次探测缓存(MINGW/MSYS/CYGWIN 前缀或 *_NT = windows,含 Git Bash 环境——T3 前一律未测即拦);探测失败 = unknown 不拦(离线误拦比天然失败更糟),launchArgv 顶层共享守卫(两 UI 同源,子菜单经此抛错入 launchNote)。面板 launch() 重构为单 spawn:T3 门优先 → 借用门(handoff 可用则免确认)→ doLaunch;windows 弹窗说明三件事(env/bash//dev/shm 未建 Windows 配方、原样 agent 行仍可用、读该机 DB 仍可用——想用它的供应商就去别的机 space 启动)。README Limits Windows 条补一句「从 Windows space 启动会显示解释弹窗」。发版后首笔,进新一轮。
+
+## Pass 40 — T5 清单更新至 RAM 交接形态 + 维护项(2026-11-20,用户指派)
+
+A 类可自行完成项:t5-remote-e2e.md 头部标注 2026-11-20 借库实测已实质覆盖远端读+远端启动(Pass 33),脚本版留作可重复证明;断言新增三行(hc get 只见 bash -c 脚本无 sk-、terminals.json grep 计 0、/dev/shm 残留计 0)——stub 收到的 --settings JSON 断言不变。维护:本地 backup-pre-squash/backup-nov20 分支删除(公开史已验证干净并发布);machineHome 按机 Memoize(homeCache,与 platformCache/shmAvailable 同款)。mac 实机轮、T9 GUI 半场、Windows 弹窗验证仍归用户。check 双过(显式)。

@@ -3,6 +3,12 @@
 Proves the mod's remote path end to end: a space on another machine reads
 THAT machine's cc-switch DB and launches claude THERE (DESIGN.md §4.2).
 
+Status 2026-11-20: materially covered live by the real cross-machine borrow
+test (mac cc-switch DB → headless Linux launch, both directions, codex;
+REVIEW Pass 33). This scripted version stays for repeatable proof and now
+also asserts the RAM-handoff posture (no credential in the recorded argv,
+nothing left in /dev/shm).
+
 ## On the remote (once)
 
 ```sh
@@ -40,6 +46,13 @@ hc --on <name> exec sh -c 'cat ~/claude-launch-dump-*.txt'
 #                     "modelPicker":{"replaceBuiltInOptions":false,"options":[]}}
 #   env section: NO ANTHROPIC_/CLAUDE_ vars (env -u ran on the REMOTE side)
 hc --on <name> exec cat .claude/settings.json   # canary unchanged
+
+# RAM handoff (Linux remote, Pass 37) — the stub still receives the inline
+# --settings JSON as ITS argv, but the terminal argv recorded by core must
+# carry only the bash -c script reading /dev/shm:
+hc get <terminal>            # argv = bash -c 's="$(cat /dev/shm/herdr-pm.…)"…' — NO sk- string
+hc --on <name> exec sh -c 'grep -c sk- ~/.local/state/herdr-core/*/terminals.json'   # 0
+hc --on <name> exec sh -c 'ls /dev/shm/herdr-pm.* 2>/dev/null | wc -l'               # 0
 ```
 
 Pass = all of the above, and the LOCAL ~/.cc-switch (if any) untouched.

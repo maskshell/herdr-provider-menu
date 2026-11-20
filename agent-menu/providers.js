@@ -137,13 +137,16 @@ async function rcMode(machine) {
   return { login };
 }
 
-/// The machine's home dir, absolute: home() locally; one exec on a remote
-/// (paths must not depend on the app process's cwd or the terminal's cwd).
+/// The machine's home dir, absolute: home() locally; one exec on a remote,
+/// memoized (paths must not depend on the app process's cwd or the cwd).
+const homeCache = new Map();
 async function machineHome(machine) {
   if (!machine) return home();
+  if (homeCache.has(machine)) return homeCache.get(machine);
   const r = await exec("sh", ["-c", 'printf %s "$HOME"'], { on: machine });
   if (r.code !== 0 || !r.stdout.trim()) throw new Error("could not read $HOME on " + machine);
-  return r.stdout.trim();
+  homeCache.set(machine, r.stdout.trim());
+  return homeCache.get(machine);
 }
 
 /// Read one text file on the machine (null when absent/unreadable — each
