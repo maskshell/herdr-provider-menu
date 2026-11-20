@@ -174,7 +174,7 @@ cc-switch 存 codex 卡为 `settings_config = { auth: {OPENAI_API_KEY} | string,
 
 **与上游的两处有意分歧**:① live 残留 `model_catalog_json` 时上游为该卡生成单模型目录盖过，mod 无目录生成 → 拒启；② BuiltIn 路由(裸选 ollama/lmstudio/bedrock)上游可直启 `model_provider=<id>`,mod 拒(本地 provider 场景罕见，拒绝语义诚实)。rc 模式与 extra args 通用机制对 codex 同样生效(launchArgv 统一分派)。
 
-**验证**：上游 codex_terminal.rs 的测试夹具作 oracle 的纯函数冒烟(KIMI 卡 × PROXY_MANAGED live、http_headers 残留、keyless、context_window、subagent 跟随、profile 六场景全对齐，分歧两处按上记落拒启);`herdr-app check` mod/agent-menu 双过。待验：mac 实机 codex 卡 E2E(用户有真卡)、T5 远端半场、sandbox UI 半场。
+**验证**：上游 codex_terminal.rs 的测试夹具作 oracle 的纯函数冒烟(KIMI 卡 × PROXY_MANAGED live、http_headers 残留、keyless、context_window、subagent 跟随、profile 六场景全对齐，分歧两处按上记落拒启);`herdr-app check` mod/agent-menu 双过。mac 实机 E2E 已过(2026-11-20 轮：子菜单/手风琴/official 灰显/DeepSeek 真应答/argv 回落形态复核)；T5 远端半场以跨机借库双向实证关账(Pass 44)。余：sandbox UI 半场(T6 惯例项)。
 
 ## 5. UI
 

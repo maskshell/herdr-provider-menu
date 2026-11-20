@@ -4,7 +4,7 @@
 
 Start Claude Code and Codex in [Herdr](https://github.com/herdrdev/herdr-app) with a provider identity from cc-switch. Each terminal uses one provider. Terminals running side by side do not affect each other. The global configuration stays untouched. One terminal can run DeepSeek while the one next to it runs Kimi.
 
-Claude Code is verified in the sandbox and on a real macOS machine. Codex mirrors cc-switch's own launcher, passes the fixture tests, and waits for a real-machine check. Windows is not supported yet. [DESIGN.md](DESIGN.md) explains how the mod works, its decisions, and its security posture. [REVIEW.md](REVIEW.md) records the verification.
+Claude Code and Codex are verified in the sandbox and on real machines (macOS and Linux), including cross-machine launches. Windows is not supported yet. [DESIGN.md](DESIGN.md) explains how the mod works, its decisions, and its security posture. [REVIEW.md](REVIEW.md) records the verification.
 
 ## Requirements
 
