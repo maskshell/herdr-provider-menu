@@ -41,6 +41,58 @@ function shellQuote(word) {
   return "'" + String(word).replace(/'/g, "'\\''") + "'";
 }
 
+// ---------------------------------------------------------------------------
+// RAM-only credential handoff (Phase 3, Pass 35/37). The launch command is
+// the only transport herdr offers (tab.new has no env channel), and the
+// target machine's core records that command in terminals.json — forever,
+// with no cleanup. So the secret must NOT ride in the terminal argv at all:
+// an exec (whose argv is NOT persisted) plants it in a 0600 file under
+// /dev/shm (RAM-backed: never on disk, gone on reboot), and the terminal
+// script only reads the PATH, deletes itself on exit, and refuses loudly
+// when the file is gone (herdr may restart a terminal after its session
+// died). Machines without /dev/shm (macOS) fall back to the inline argv —
+// the old, documented persistence posture — and the panel asks before a
+// cross-machine launch only in that fallback case.
+
+const SHM_DIR = "/dev/shm";
+const shmAvailable = new Map();
+
+/// True when the machine can take the RAM-only handoff (probed once).
+export async function handoffAvailable(machine = null) {
+  const key = machine ?? "";
+  if (shmAvailable.has(key)) return shmAvailable.get(key);
+  let ok = false;
+  try {
+    const r = await exec("sh", ["-c", `test -d ${SHM_DIR} && test -w ${SHM_DIR}`], { on: machine });
+    ok = r.code === 0;
+  } catch { ok = false; }
+  shmAvailable.set(key, ok);
+  return ok;
+}
+
+/// Plant a secret on the machine and return the RAM file's path, or null
+/// (caller falls back to the inline argv). mktemp names are [A-Za-z0-9./],
+/// safe to embed unquoted in the scripts below.
+async function handoffFile(machine, secret) {
+  if (!secret) return null;
+  try {
+    const r = await exec("sh", ["-c",
+      "f=$(mktemp " + SHM_DIR + "/herdr-pm.XXXXXXXXXXXX) && chmod 600 \"$f\" && printf %s " + shellQuote(secret) + " > \"$f\" && printf %s \"$f\""],
+      { on: machine });
+    return r.code === 0 && r.stdout.trim() ? r.stdout.trim() : null;
+  } catch { return null; }
+}
+
+/// The terminal script wrapper: read the secret, DELETE the file at once
+/// (lifetime ≈ milliseconds — a trap would never fire past exec, and a KILL
+/// would leak it; read-then-rm leaks nothing), refuse loudly when the file
+/// is already gone (a terminal restarted after its session died), run body
+/// with the secret in the shell variable $s.
+function handoffScript(file, body) {
+  return ["bash", "-c",
+    's="$(cat ' + file + ' 2>/dev/null)"; [ -n "$s" ] || { echo \'provider credential file missing (session ended?) — relaunch from the menu\'; exit 1; }; rm -f ' + file + "; " + body];
+}
+
 function parse(text, fallback) {
   try { return JSON.parse(text); } catch { return fallback; }
 }
@@ -205,6 +257,9 @@ export function launchSettings(provider, liveText) {
 }
 
 const claudeHarness = {
+  /// Tab/section title for the UIs (panel header, new-tab name).
+  title: "Claude",
+
   /// The common-config merge for claude: JSON objects, deep, common wins.
   mergeCommon(settings, common) { return deepMerge(settings, common); },
 
@@ -213,10 +268,23 @@ const claudeHarness = {
   },
 
   /// Reads the machine's live ~/.claude/settings.json first (unreadable →
-  /// no blocks; upstream warns and proceeds the same way).
+  /// no blocks; upstream warns and proceeds the same way). The settings JSON
+  /// goes through the RAM handoff when the machine has /dev/shm; the inline
+  /// argv remains the fallback.
   async launch(card, machine, extra, rc) {
     const liveText = await readText(machine, ".claude/settings.json", home() + "/.claude/settings.json");
-    return claudeArgv(launchSettings(card, liveText), extra, rc);
+    const settings = launchSettings(card, liveText);
+    const file = await handoffFile(machine, JSON.stringify(settings));
+    if (file) {
+      const tail = extra.map(shellQuote).join(" ");
+      const unset = UNSET.map(u => "-u " + shellQuote(u)).join(" ");
+      // rc mode exports the JSON for the inner profile shell ($PMS); the
+      // plain mode uses "$s" directly — bash never re-evaluates var values.
+      return handoffScript(file, rc
+        ? 'export PMS="$s"; exec env ' + unset + " bash " + (rc.login ? "-lic" : "-ic") + " " + shellQuote('claude --settings "$PMS"' + (tail ? " " + tail : ""))
+        : 'exec env ' + unset + ' claude --settings "$s"' + (tail ? " " + tail : ""));
+    }
+    return claudeArgv(settings, extra, rc);
   },
 };
 
@@ -418,6 +486,8 @@ async function codexLiveLogin(machine) {
 }
 
 const codexHarness = {
+  title: "Codex",
+
   /// The common-config merge for codex: TOML texts concatenated, the snippet's
   /// keys win (the parser lets later lines override earlier ones).
   mergeCommon(settings, common) {
@@ -430,11 +500,22 @@ const codexHarness = {
   },
 
   /// Reads the machine's live ~/.codex/config.toml (unreadable → no
-  /// neutralization) and auth.json (login flag), pins CODEX_HOME.
+  /// neutralization) and auth.json (login flag), pins CODEX_HOME. The key
+  /// goes through the RAM handoff when the machine has /dev/shm; the inline
+  /// env word remains the fallback.
   async launch(card, machine, extra, rc) {
     const liveText = await readText(machine, ".codex/config.toml", home() + "/.codex/config.toml");
     const homeDir = await machineHome(machine);
-    return codexArgv(card, liveText, await codexLiveLogin(machine), extra, rc, homeDir);
+    const login = await codexLiveLogin(machine);
+    const file = await handoffFile(machine, String(card.key ?? ""));
+    if (file) {
+      const quoted = ["codex", "--no-daemon", ...codexOverrides(card, liveText, login), ...extra].map(shellQuote).join(" ");
+      const head = "export " + CODEX_KEY_ENV + '="$s"; export CODEX_HOME=' + shellQuote(homeDir.replace(/\/+$/, "") + "/.codex") + "; ";
+      return handoffScript(file, rc
+        ? head + "exec bash " + (rc.login ? "-lic" : "-ic") + " " + shellQuote(quoted)
+        : head + "exec " + quoted);
+    }
+    return codexArgv(card, liveText, login, extra, rc, homeDir);
   },
 };
 
@@ -442,6 +523,25 @@ const codexHarness = {
 // Registry + dispatch.
 
 export const HARNESS = { claude: claudeHarness, codex: codexHarness };
+
+/// The refusal sentence for a card herdr cannot launch — the single source
+/// for both UIs (the docked panel and the agent-menu submenu show the same
+/// words). Codex notes mirror cc-switch's own terminal gating: official cards
+/// follow Codex's sign-in, router-only formats need its local proxy.
+export function cardNote(card, app = "claude") {
+  const notes = {
+    codex: {
+      official: "follows Codex's own sign-in — switch to it in cc-switch, not here.",
+      router: "needs cc-switch's local router — switch there, not here.",
+      "no-key": "has no API key — add one in cc-switch first.",
+      "no-table": "has no route table (base_url) — fix the card in cc-switch first.",
+      "follows-login": "has no route of its own — switch to it in cc-switch first.",
+      builtin: "selects a built-in provider — switch to it in cc-switch first.",
+    },
+  };
+  return card.name + " " + ((notes[app] ?? {})[card.reason]
+    || "is not an env-form API card (official or routed?) — switch to it in cc-switch, not here.");
+}
 
 /// Providers of one machine (null: this one), cc-switch's order, current first.
 /// Throws when sqlite3 or the database is missing — callers show a hint row.

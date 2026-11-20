@@ -8,33 +8,10 @@
 import { View, div, svg, image } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { theme, spaces, panes, knownAgents, run, openOverlay, closeOverlay, props, window, keys, shared, setShared } from "herdr";
-import { readProviders, launchArgv } from "./providers.js";
+import { readProviders, launchArgv, HARNESS, cardNote } from "./providers.js";
 
 // The last agents each machine reported, shown at once while knownAgents() checks again.
 const KNOWN = "new-menu.agents";
-
-// Harness CLIs that get a provider submenu (programs.json keys), one entry
-// per harness: the tab-title prefix and the refusal note shown for a card
-// herdr cannot launch (reason strings come from providers.js classify).
-// Codex notes mirror cc-switch's own terminal gating: official cards follow
-// Codex's sign-in, router-only formats need its local proxy.
-const SUBMENUS = {
-  claude: {
-    title: "Claude",
-    note: () => "is not an env-form API card (official or routed?) — switch to it in cc-switch, not here.",
-  },
-  codex: {
-    title: "Codex",
-    note: reason => ({
-      official: "follows Codex's own sign-in — switch to it in cc-switch, not here.",
-      router: "needs cc-switch's local router — switch there, not here.",
-      "no-key": "has no API key — add one in cc-switch first.",
-      "no-table": "has no route table (base_url) — fix the card in cc-switch first.",
-      "follows-login": "has no route of its own — switch to it in cc-switch first.",
-      builtin: "selects a built-in provider — switch to it in cc-switch first.",
-    }[reason] || "is not a directly launchable card — switch to it in cc-switch first."),
-  },
-};
 
 function shortcut(name) {
   const k = keys().find(b => b.section === "global" && b.action === name);
@@ -99,8 +76,8 @@ export default class AgentMenu extends View {
   }
 
   /// The refusal note for a non-launchable card of the open submenu's harness.
-  cardNote(p) {
-    return p.name + " " + SUBMENUS[this.sub].note(p.reason);
+  note(p) {
+    return cardNote(p, this.sub);
   }
 
   launchProvider(p, cx) {
@@ -110,7 +87,7 @@ export default class AgentMenu extends View {
       try {
         const argv = await launchArgv(p, [], space?.machine ?? null, app);
         closeOverlay(props().overlay);
-        run("tab.new", { name: SUBMENUS[app].title + " (" + p.name + ")", space: space?.id, argv });
+        run("tab.new", { name: HARNESS[app].title + " (" + p.name + ")", space: space?.id, argv });
       }
       catch (e) {
         this.launchNote = String(e?.message ?? e);
@@ -121,6 +98,8 @@ export default class AgentMenu extends View {
 
   /// A submenu-harness row (Claude, Codex): click toggles the submenu instead
   /// of launching (the top-level digit still launches the plain live slot).
+  /// Accordion: one submenu open at a time — clicking another harness swaps
+  /// to it in the same click (collapse the open one AND open the new one).
   agentRow(a, i) {
     const t = theme();
     const open = this.sub === a.key;
@@ -128,18 +107,19 @@ export default class AgentMenu extends View {
     return h_flex().id(a.key).h(31).px(9).gap(10).rounded(7).items_center().flex_none()
       .text_color(t.foreground).hover(s => s.bg(t.selected))
       .on_click((_e, cx) => {
-        if (this.sub) { this.sub = null; cx.notify(); }
+        if (this.sub === a.key) { this.sub = null; cx.notify(); }
         else this.expand(cx, a.key);
       })
       .child(icon).child(div().flex_1().child(a.name))
       .child(div().text_size(11).text_color(t.dim).child(open ? "▾" : (i < 9 ? String(i + 1) + " ▸" : "▸")));
   }
 
-  /// One indented submenu row (Default, or a provider). dim rows explain
-  /// themselves on click instead of launching.
+  /// One indented submenu row (a provider). pl(33) aligns the row's text with
+  /// the harness NAME above it: agent rows are px(9) + 14px icon + gap(10).
+  /// dim rows explain themselves on click instead of launching.
   subRow(id, name, action, hint, tag = "", dim = false) {
     const t = theme();
-    return h_flex().id(id).h(27).pl(28).pr(9).gap(8).rounded(7).items_center().flex_none()
+    return h_flex().id(id).h(27).pl(33).pr(9).gap(8).rounded(7).items_center().flex_none()
       .text_size(12.3).text_color(dim ? t.dim : t.foreground)
       .when(!dim, el => el.hover(s => s.bg(t.selected)))
       .on_click((_e, cx) => action(cx))
@@ -162,15 +142,15 @@ export default class AgentMenu extends View {
         : /cc-switch\.db|unable to open/i.test(this.note)
           ? "no cc-switch.db here (add a provider in cc-switch first)"
           : "could not read cc-switch";
-      rows.push(h_flex().id("sub-error").h(27).pl(28).pr(9).items_center().flex_none()
+      rows.push(h_flex().id("sub-error").h(27).pl(33).pr(9).items_center().flex_none()
         .text_size(12.3).text_color(t.dim).child(hint));
     }
     else if (this.providers === null) {
-      rows.push(h_flex().id("sub-loading").h(27).pl(28).pr(9).items_center().flex_none()
+      rows.push(h_flex().id("sub-loading").h(27).pl(33).pr(9).items_center().flex_none()
         .text_size(12.3).text_color(t.dim).child("Reading cc-switch…"));
     }
     else if (this.providers.length === 0) {
-      rows.push(h_flex().id("sub-empty").h(27).pl(28).pr(9).items_center().flex_none()
+      rows.push(h_flex().id("sub-empty").h(27).pl(33).pr(9).items_center().flex_none()
         .text_size(12.3).text_color(t.dim).child("No providers in cc-switch yet — add one there, then reopen"));
     }
     else {
@@ -178,7 +158,7 @@ export default class AgentMenu extends View {
         const n = i < 9 ? String(i + 1) : "";
         if (p.launchable === false) {
           rows.push(this.subRow("sub-" + i, p.name, cx => {
-            this.launchNote = this.cardNote(p);
+            this.launchNote = this.note(p);
             cx.notify();
           }, n, "cc-switch", true));
         }
@@ -213,7 +193,7 @@ export default class AgentMenu extends View {
           const pick = (this.providers ?? [])[n - 1];
           if (!pick) return;
           if (pick.launchable === false) {
-            this.launchNote = this.cardNote(pick);
+            this.launchNote = this.note(pick);
             cx.notify();
           }
           else this.launchProvider(pick, cx);
@@ -228,7 +208,7 @@ export default class AgentMenu extends View {
       .child(div().px(9).pt(8).pb(4).text_size(11).text_color(t.dim).child("Start an agent"))
       .child(v_flex().flex_1().min_h(0).overflow_y_scrollbar()
         .children(choices.flatMap((a, i) => {
-          if (!(a.key in SUBMENUS) || !a.installed)
+          if (!(a.key in HARNESS) || !a.installed)
             return [this.row(a.key, a.tint ? svg(a.icon).size(14).text_color(t.foreground) : image(a.icon).size(14), a.name,
               () => run("tab.new", { name: a.name, space: space?.id, argv: a.run }), a.installed ? (i < 9 ? String(i + 1) : "") : "not installed", a.installed)];
           return [this.agentRow(a, i), ...(this.sub === a.key ? [this.subList()] : [])];

@@ -266,6 +266,12 @@ def main():
     conn.commit()
     conn.close()
 
+    # The database holds provider tokens: owner-only, whatever the umask says
+    # (a plain sqlite3.create lands world-readable 644 like cc-switch's own).
+    for suffix in ("", "-wal", "-shm"):
+        if os.path.exists(db + suffix):
+            os.chmod(db + suffix, 0o600)
+
     # verify: reopen read-only like the mod does, run the mod's exact query
     conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
     ok = conn.execute("PRAGMA integrity_check").fetchone()[0]
