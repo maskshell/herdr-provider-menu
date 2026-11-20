@@ -7,7 +7,7 @@
 // the argv for one launch on one machine. Shared plumbing (DB query, live-file
 // reads, extras, rc mode) lives here as the context; readProviders/launchArgv
 // are thin dispatchers. A new harness is one new entry, no call-site branching.
-import { exec, home, readTextFile, shared } from "herdr";
+import { exec, home, readTextFile, shared, window } from "herdr";
 
 /// shared() key for the last good read (menu opens instantly, then re-checks).
 export const CACHE = "provider-menu.claude";
@@ -543,6 +543,37 @@ export function cardNote(card, app = "claude") {
     || "is not an env-form API card (official or routed?) — switch to it in cc-switch, not here.");
 }
 
+// ---------------------------------------------------------------------------
+// Platform gate (until T3, the Windows recipes). The launch argv is Unix-
+// shaped (env, bash, sh, /dev/shm); herdr on Windows spawns through a
+// PowerShell wrapper where none of those resolve. Rather than spawn a
+// terminal that dies with a cryptic toast, callers can ask whether the
+// target machine can take provider launches at all. The local machine uses
+// the app's own platform; a remote is probed once with uname (MINGW/MSYS/
+// CYGWIN report *_NT — Git Bash counts as Windows too: untested there until
+// T3). A failed probe is "unknown": never block on a possibly-offline core —
+// the launch itself fails honestly then.
+
+const platformCache = new Map();
+
+export async function machinePlatform(machine = null) {
+  const key = machine ?? "";
+  if (platformCache.has(key)) return platformCache.get(key);
+  let plat = "unknown";
+  if (!machine) {
+    plat = window()?.platform === "windows" ? "windows" : "unix";
+  }
+  else {
+    try {
+      const r = await exec("uname", ["-s"], { on: machine });
+      const out = (r.stdout ?? "").trim();
+      if (r.code === 0 && out) plat = /^(mingw|msys|cygwin)/i.test(out) || /_nt/i.test(out) ? "windows" : "unix";
+    } catch { /* offline or no uname: unknown */ }
+  }
+  platformCache.set(key, plat);
+  return plat;
+}
+
 /// Providers of one machine (null: this one), cc-switch's order, current first.
 /// Throws when sqlite3 or the database is missing — callers show a hint row.
 export async function readProviders(machine, app = "claude") {
@@ -569,6 +600,8 @@ export async function readProviders(machine, app = "claude") {
 /// the rc mode resolve here, shared. Dynamic env conventions live in the rc
 /// mode (RC key): the profile is the general mechanism, the mod hardcodes none.
 export async function launchArgv(provider, extra = [], machine = null, app = "claude") {
+  if (await machinePlatform(machine) === "windows")
+    throw new Error("this machine runs Windows — provider launches need the Windows recipes (not built yet). Plain agent rows still work.");
   const harness = HARNESS[app] ?? claudeHarness;
   return harness.launch(provider, machine, extraArgs(machine, extra), await rcMode(machine));
 }

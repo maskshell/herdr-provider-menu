@@ -86,7 +86,7 @@ These commands return to the shipped layout. Delete the personal layout file und
 
 ## Limits
 
-- Windows is not supported as the GUI machine or as a launch target yet: the launch commands use `env`, `bash`, and `/dev/shm` (Windows recipes are the pending T3). A Windows machine works as a database source — reading its cc-switch.db only needs sqlite3 there.
+- Windows is not supported as the GUI machine or as a launch target yet: the launch commands use `env`, `bash`, and `/dev/shm` (Windows recipes are the pending T3); launching from a Windows space shows an explanation dialog. A Windows machine works as a database source — reading its cc-switch.db only needs sqlite3 there.
 - Some providers work only through cc-switch itself: official OAuth accounts, and formats that need the local router. They appear grey, with the reason. The mod never launches them.
 - The mod never adds `--dangerously-skip-permissions` or any other flag by itself. A flag enters a launch only through the recorded `args` row.
 - Credentials reach the CLI through a RAM-only handoff where the machine allows it: an exec plants the secret in a 0600 file under `/dev/shm`, the terminal command only reads that path and deletes the file at once, and nothing lands on disk or in the recorded command. Machines without `/dev/shm` (macOS) fall back to the credential riding in the launch command itself. There, herdr's core records the command — including the credential — in its state file `~/.local/state/herdr-core/<session>/terminals.json`, with no automatic cleanup, and a first cross-machine launch asks for confirmation per machine pair. Live sessions show the fallback command in `/proc`. DESIGN.md §6 has the details.

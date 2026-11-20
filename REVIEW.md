@@ -289,3 +289,7 @@ Pass 33 的候选改进落地,兼顾用户两则意见(↻ 图标太弱、标题
 ## Pass 38 — 术语:「秘密」→「凭据」(2026-11-20,用户指误)
 
 Phase 3 文档初稿把 secret 直译作「秘密」,不合技术习惯;统一为「凭据」(与全文「凭据可见性」等一致)。同批补齐:Pass 35/36 的 DESIGN §6 审计与缓解块曾因锚串半角/全角不匹配静默未落(replace 无断言的教训——与 Pass 21 check 静默同类),已按实际文本重锚补入;新增块的半角标点同步规范化。
+
+## Pass 39 — Windows 目标模式弹窗拦截(2026-11-20,用户拍板)
+
+T3 前对 Windows 目标显式拦截,优于 spawn 必死终端+神秘 toast。检测:machinePlatform(machine)——本地 window().platform;远端 uname -s 一次探测缓存(MINGW/MSYS/CYGWIN 前缀或 *_NT = windows,含 Git Bash 环境——T3 前一律未测即拦);探测失败 = unknown 不拦(离线误拦比天然失败更糟),launchArgv 顶层共享守卫(两 UI 同源,子菜单经此抛错入 launchNote)。面板 launch() 重构为单 spawn:T3 门优先 → 借用门(handoff 可用则免确认)→ doLaunch;windows 弹窗说明三件事(env/bash//dev/shm 未建 Windows 配方、原样 agent 行仍可用、读该机 DB 仍可用——想用它的供应商就去别的机 space 启动)。README Limits Windows 条补一句「从 Windows space 启动会显示解释弹窗」。发版后首笔,进新一轮。

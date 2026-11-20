@@ -4,7 +4,7 @@
 import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import { theme, spaces, run, shared, setShared, window, checking, props, openOverlay, closeOverlay, knownAgents } from "herdr";
-import { readProviders, launchArgv, handoffAvailable, EXTRA, RC, HARNESS, cardNote } from "./providers.js";
+import { readProviders, launchArgv, handoffAvailable, machinePlatform, EXTRA, RC, HARNESS, cardNote } from "./providers.js";
 
 /// shared() key for the last good read of one harness (instant open, re-check).
 const cacheKey = app => "provider-menu." + app;
@@ -33,6 +33,13 @@ export default class ProviderMenu extends View {
       this.bApp = p.app;
       this.bSrc = typeof p.src === "string" ? p.src : "";
       this.bDst = typeof p.dst === "string" ? p.dst : "";
+      this.handle = cx.focus_handle();
+      this.handle.focus();
+      return;
+    }
+    if (props()?.mode === "windows") {
+      this.dialog = true;
+      this.wName = typeof (props() ?? {}).machine === "string" ? props().machine : "";
       this.handle = cx.focus_handle();
       this.handle.focus();
       return;
@@ -116,15 +123,21 @@ export default class ProviderMenu extends View {
   launch(p, cx, app) {
     const src = this.src[app] ?? null;
     const dst = spaces().find(s => s.active)?.machine ?? "";
-    if (src !== null && src !== dst && !((shared(BORROW) ?? {})[src + ">" + dst])) {
-      cx.spawn(async cx => {
-        if (await handoffAvailable(dst === "" ? null : dst)) { this.doLaunch(p, cx, app); return; }
+    cx.spawn(async cx => {
+      // T3 gate first: a Windows target cannot take provider launches at all.
+      if (await machinePlatform(dst === "" ? null : dst) === "windows") {
+        openOverlay({ mod: "provider-menu", kind: "dialog", width: 520, height: 250, props: { mode: "windows", machine: dst } });
+        cx.notify();
+        return;
+      }
+      if (src !== null && src !== dst && !((shared(BORROW) ?? {})[src + ">" + dst])
+        && !(await handoffAvailable(dst === "" ? null : dst))) {
         openOverlay({ mod: "provider-menu", kind: "dialog", width: 560, height: 310, props: { mode: "borrow", provider: p, app, src, dst } });
         cx.notify();
-      });
-      return;
-    }
-    this.doLaunch(p, cx, app);
+        return;
+      }
+      this.doLaunch(p, cx, app);
+    });
   }
 
   doLaunch(p, cx, app) {
@@ -329,8 +342,30 @@ export default class ProviderMenu extends View {
         .child(btn("bd-proceed", "Proceed", true, go)));
   }
 
+  /// The T3 gate dialog: this space's machine runs Windows; provider launches
+  /// need the not-yet-built Windows recipes. Plain agent rows still work.
+  windowsDialog() {
+    const t = theme();
+    const p = props() ?? {};
+    const name = this.wName === "" ? "this machine" : this.wName;
+    return v_flex().id("windows-dialog").track_focus(this.handle)
+      .on_key_down((e, cx) => { if (e.key === "escape") { closeOverlay(p.overlay); cx.stop_propagation(); } })
+      .w_full().min_h(0).p(18).gap(2).bg(t.popover).text_color(t.foreground)
+      .child(h_flex().items_center()
+        .child(div().flex_1().text_size(15).font_semibold().child("Windows machine"))
+        .child(div().text_size(11).text_color(t.dim).child("Esc")))
+      .child(div().pt(8).text_size(12.3)
+        .child("This space runs on " + name + ". Provider launches use env, bash and /dev/shm — the Windows recipes are not built yet."))
+      .child(div().pt(8).text_size(11.5).text_color(t.dim)
+        .child("Plain agent rows still work. Reading this machine's database works too — launch from another machine's space to use its providers."))
+      .child(h_flex().pt(16).gap(8).justify_end()
+        .child(h_flex().id("wd-ok").h(30).px(12).items_center().rounded(8)
+          .border_1().border_color(t.solid).bg(t.solid).text_color(t.solid_foreground).cursor_pointer()
+          .on_click(() => closeOverlay(p.overlay)).child("OK")));
+  }
+
   render() {
-    if (this.dialog) return props()?.mode === "borrow" ? this.borrowDialog() : this.argsDialog();
+    if (this.dialog) return props()?.mode === "windows" ? this.windowsDialog() : props()?.mode === "borrow" ? this.borrowDialog() : this.argsDialog();
     const t = theme();
     const unix = window()?.platform !== "windows";
     return v_flex().id("provider-menu").size_full().bg(t.surface).p(6).gap(2).text_size(12.5)
