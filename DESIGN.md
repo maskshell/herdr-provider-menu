@@ -46,7 +46,7 @@
 
 **live 槽位语义(2026-11-19 核实)**:cc-switch 的"切换"就是把选中 provider写进 live 客户端文件(claude → `~/.claude/settings.json`;`services/provider/ live.rs:1-3` 只分发，写入引擎在 `claude_direct.rs`),DB 的 `is_current` 镜像它。所以**不走本 mod 的默认 claude 启动 = live 槽位的身份**——cc-switch 机器上就是`is_current` 那个 provider；本 mod 的行是"仅此终端"的覆盖，不动 live。独立目录(官方账号)与临时 `--settings` 启动模式不碰 live 文件。
 
-**无头机缺口(2026-11-19 核实)**:cc-switch 是纯 Tauri GUI(`main.rs` 无 CLI子命令；`lightweight.rs` 是托盘模式，仍需图形会话)，无 CLI/无头模式。mod 只需DB **文件**、不需 cc-switch 运行，但无头机上"谁建库/谁改库"没有正主。**边界声明(2026-11-19):DB 的供给与同步归用户自行解决(cc-switch 官方 WebDAV 同步等)，不在本 mod 与 herdr 的业务范畴**;`seed-cc-switch-db.py` 仅为验证工具——按 `database/schema.rs` 的 DDL 从 spec 造单 provider 测试库(含 `id`/`created_at` 等全列；GUI 打开兼容性待验 → REVIEW T9)，不是正式建库方式；GUI 机改完拷库会漂移，同样不算正路。长期正解仍是给上游提 CLI/headless 需求(ccs 的存在即此缺口)。
+**无头机缺口(2026-11-19 核实)**:cc-switch 是纯 Tauri GUI(`main.rs` 无 CLI子命令；`lightweight.rs` 是托盘模式，仍需图形会话)，无 CLI/无头模式。mod 只需DB **文件**、不需 cc-switch 运行，但无头机上"谁建库/谁改库"没有正主。**边界声明(2026-11-19):DB 的供给与同步归用户自行解决(cc-switch 官方 WebDAV 同步等)，不在本 mod 与 herdr 的业务范畴**;`seed-cc-switch-db.py` 仅为验证工具——按 `database/schema.rs` 的 DDL 从 spec 造单 provider 测试库(含 `id`/`created_at` 等全列；消费者只有 mod 的只读查询,读兼容即全部意义——GUI 打开兼容性 2026-11-20 撤验:seed 仅为验证工具,真库由 GUI/WebDAV 供给,无人会把 seed 库挂到 GUI 下)，不是正式建库方式；GUI 机改完拷库会漂移，同样不算正路。长期正解仍是给上游提 CLI/headless 需求(ccs 的存在即此缺口)。
 
 **为什么核心零改动**(herdr-app AGENTS.md 三问，全否): app 不依它行动(只在启动瞬间机械传参)、不是只有 app 看得见(mod 用`exec`/`run` 即可)、mod 小心就能做对。属于 mods，即使代价是重复。
 
@@ -245,7 +245,7 @@ sandbox 是 herdr-app 仓库自带的(`scripts/sandbox`，独立 core/home/显�
 |---|---|
 | `t1-wal-test.sh` | WAL 活跃库 `sqlite3 -readonly` 读取正确性(5 案例) |
 | `t2-precedence-probe.sh` + `t2-server.py` | 真 claude 优先级/泄漏探针(localhost 回显服务器、假 token;PROBE_USER/CLAUDE_BIN 可参数化) |
-| `seed-cc-switch-db.py` | 验证工具：从 spec 造单 provider 测试库(全量 DDL + user_version;T9)，非正式建库方式 |
+| `seed-cc-switch-db.py` | 验证工具：从 spec 造单 provider 测试库(全量 DDL + user_version；消费者只有 mod 的只读查询)，非正式建库方式 |
 | `t5-remote-prepare.sh` + `t5-remote-e2e.md` | 远端机准备 + T5 E2E 清单 |
 | `p1-install.sh` | GUI 机三层安装的自检+修复(幂等；覆盖源、打布局补丁、缺克隆时打印 `do` 命令) |
 

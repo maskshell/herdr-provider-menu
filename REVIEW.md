@@ -153,7 +153,7 @@ E2E 中发现并修复的三个问题：
 | T5 | 远程 space:on 读+启动 | 🔶 Pass 6:prepare/e2e 脚本备妥；真机载体已就绪——本机(headless，跑 core)DB 已 seed GLM 全量 env,GUI 机三层装通即 T5 首跑 |
 | T6 | sandbox 全链路 UI | ✅ T6-lite(渲染+点击+启动+env 清洗)；真 claude 未测 |
 | T8 | `--settings` × live 逐键合并泄漏 | ✅ sandbox E2E 26/26(Pass 5)+ 真 claude 2.1.327 复验(Pass 6/T2-B) |
-| T9 | 无头 seed 的 DB 被 GUI 零迁移打开 | 🔶 无头半已过(全量 DDL + user_version=27 + 校验);master @ 6da70837 复核 SCHEMA_VERSION=27 无漂移；GUI 打开复验待用户机 |
+| T9 | seed 的 DB 被 mod 读路径接受 | ✅ 关闭(2026-11-20,Pass 41):读兼容即全部意义,GUI 半场撤销;schema 漂移被动看上游 SCHEMA_VERSION(§11) |
 | T10 | 非 env 形态 provider 拒启 + 提示 | ✅ Pass 6:sandbox 三行渲染、拒启零终端、note 逐字、回归启动无恙；判据硬化：OAuth 账号卡结构性非 env(上游源码背书)，拒启/灰显必然 |
 | P1 | 三层克隆子菜单(agent-menu/my-tabs/布局) | ✅ Pass 7:sandbox E2E 全通(弹层/子菜单/点击+数字键启动/RouterX 拒)；真机安装排障中——GUI 机子菜单未现，`scripts/p1-install.sh` 自检修复已备 |
 | — | 项目自身 LICENSE | ✅ 2026-11-19 MIT(转公开准备；README 英文化 + README.zh-CN + 示例布局同批) |
@@ -297,3 +297,7 @@ T3 前对 Windows 目标显式拦截,优于 spawn 必死终端+神秘 toast。�
 ## Pass 40 — T5 清单更新至 RAM 交接形态 + 维护项(2026-11-20,用户指派)
 
 A 类可自行完成项:t5-remote-e2e.md 头部标注 2026-11-20 借库实测已实质覆盖远端读+远端启动(Pass 33),脚本版留作可重复证明;断言新增三行(hc get 只见 bash -c 脚本无 sk-、terminals.json grep 计 0、/dev/shm 残留计 0)——stub 收到的 --settings JSON 断言不变。维护:本地 backup-pre-squash/backup-nov20 分支删除(公开史已验证干净并发布);machineHome 按机 Memoize(homeCache,与 platformCache/shmAvailable 同款)。mac 实机轮、T9 GUI 半场、Windows 弹窗验证仍归用户。check 双过(显式)。
+
+## Pass 41 — T9 GUI 打开半场撤销(2026-11-20,用户裁决)
+
+用户指正:该半场是 Pass 14(seed 降为纯验证工具)之前的遗留——当年 seed 被当作无头机建库路径时「GUI 能否零迁移接管」才有意义;如今 seed 库的唯一消费者是 mod 的只读查询,读兼容由 T1/T8/sandbox 每次读库即证,GUI 打开与否对产品零影响,还要求用户备份/还原真库(风险换不来价值)。T9 重定义并关闭:seed 产出可被读路径接受的库 = 已证;schema 漂移监控维持被动看上游 SCHEMA_VERSION(§11 已记 27 未动)。验证指南对应段删除;DESIGN §2/§9.1 措辞同步。
