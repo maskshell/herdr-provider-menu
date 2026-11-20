@@ -293,7 +293,7 @@ export default class ProviderMenu extends View {
       .w_full().min_h(0).p(18).bg(t.popover).text_color(t.foreground)
       .child(h_flex().items_center()
         .child(div().flex_1().text_size(15).font_semibold().child("Extra launch args"))
-        .child(div().text_size(11).text_color(t.dim).child("Esc")))
+        .child(this.escChip(p)))
       .child(div().pt(4).text_size(11.5).text_color(t.dim)
         .child(this.machine ? "appended to every launch on machine " + this.machine : "appended to every launch on this machine"))
       .child(div().pt(12).child(Input.new(this.input).h(36).px(10).rounded(9).border_1().border_color(t.input).bg(t.background).text_size(12.8)))
@@ -306,13 +306,39 @@ export default class ProviderMenu extends View {
           .on_click(() => this.saveArgs()).child("Save")));
   }
 
+  /// A clickable Esc chip for dialog title rows (the key handler stays for
+  /// keyboards; the chip is the visible, clickable affordance).
+  escChip(p) {
+    const t = theme();
+    return h_flex().id("esc").h(18).px(6).items_center().rounded(5)
+      .text_size(11).text_color(t.dim).cursor_pointer()
+      .hover(s => s.bg(t.raised))
+      .on_click(() => closeOverlay(p.overlay)).child("Esc");
+  }
+
   /// The cross-machine launch confirmation (Pass 35/36): what lands where,
-  /// and the way out (launch from the target's own database).
+  /// and the way out (launch from the target's own database). The launch
+  /// happens BEFORE the overlay closes — spawning on this dialog's context
+  /// after close would be torn down with it (first await never resumes;
+  /// the bug behind a dead Proceed button, Pass 42).
   borrowDialog() {
     const t = theme();
     const p = props() ?? {};
     const name = m => m === "" ? "this machine" : m;
-    const go = cx => { closeOverlay(p.overlay); this.doLaunch(this.bProvider, cx, this.bApp); };
+    const go = cx => {
+      this.bNote = "";
+      cx.spawn(async cx => {
+        const space = spaces().find(s => s.active);
+        try {
+          const argv = await launchArgv(this.bProvider, [], space?.machine ?? null, this.bApp);
+          closeOverlay(p.overlay);
+          run("tab.new", { name: HARNESS[this.bApp].title + " (" + this.bProvider.name + ")", space: space?.id, argv });
+        } catch (e) {
+          this.bNote = String(e?.message ?? e);
+          cx.notify();
+        }
+      });
+    };
     const always = cx => {
       const all = shared(BORROW) ?? {};
       all[this.bSrc + ">" + this.bDst] = true;
@@ -329,13 +355,14 @@ export default class ProviderMenu extends View {
       .w_full().min_h(0).p(18).gap(2).bg(t.popover).text_color(t.foreground)
       .child(h_flex().items_center()
         .child(div().flex_1().text_size(15).font_semibold().child("Cross-machine launch"))
-        .child(div().text_size(11).text_color(t.dim).child("Esc")))
+        .child(this.escChip(p)))
       .child(div().pt(8).text_size(12.3)
         .child((this.bProvider?.name ?? "This provider") + " comes from " + name(this.bSrc) + "'s database. The launch runs on " + name(this.bDst) + "."))
       .child(div().pt(8).text_size(12.3)
         .child("The credential travels in the launch command. Herdr's core on " + name(this.bDst) + " records that command in its state file terminals.json. The record stays after the terminal closes; nothing cleans it automatically. Live sessions also show the command in /proc."))
       .child(div().pt(8).text_size(11.5).text_color(t.dim)
         .child("To keep a credential off a machine, launch from that machine's own database instead."))
+      .when(this.bNote, el => el.child(div().pt(8).text_size(11.5).text_color(t.dim).child(this.bNote)))
       .child(h_flex().pt(16).gap(8).justify_end()
         .child(btn("bd-cancel", "Cancel", false, cx => closeOverlay(p.overlay)))
         .child(btn("bd-always", "Always for this pair", false, always))
@@ -353,7 +380,7 @@ export default class ProviderMenu extends View {
       .w_full().min_h(0).p(18).gap(2).bg(t.popover).text_color(t.foreground)
       .child(h_flex().items_center()
         .child(div().flex_1().text_size(15).font_semibold().child("Windows machine"))
-        .child(div().text_size(11).text_color(t.dim).child("Esc")))
+        .child(this.escChip(p)))
       .child(div().pt(8).text_size(12.3)
         .child("This space runs on " + name + ". Provider launches use env, bash and /dev/shm — the Windows recipes are not built yet."))
       .child(div().pt(8).text_size(11.5).text_color(t.dim)

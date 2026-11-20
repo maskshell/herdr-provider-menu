@@ -301,3 +301,7 @@ A 类可自行完成项:t5-remote-e2e.md 头部标注 2026-11-20 借库实测已
 ## Pass 41 — T9 GUI 打开半场撤销(2026-11-20,用户裁决)
 
 用户指正:该半场是 Pass 14(seed 降为纯验证工具)之前的遗留——当年 seed 被当作无头机建库路径时「GUI 能否零迁移接管」才有意义;如今 seed 库的唯一消费者是 mod 的只读查询,读兼容由 T1/T8/sandbox 每次读库即证,GUI 打开与否对产品零影响,还要求用户备份/还原真库(风险换不来价值)。T9 重定义并关闭:seed 产出可被读路径接受的库 = 已证;schema 漂移监控维持被动看上游 SCHEMA_VERSION(§11 已记 27 未动)。验证指南对应段删除;DESIGN §2/§9.1 措辞同步。
+
+## Pass 42 — 借用弹窗两缺陷修复(2026-11-20,用户实测报告)
+
+① Proceed 无效:go 原为 closeOverlay 后 doLaunch(cx.spawn)——spawn 挂在对话框视图 context 上,浮层关闭即拆除,首个 await(读远端/交接 exec)处被取消,启动永不发生。修为 agent-menu 可证模式:spawn 内先 await 算完 argv,再 closeOverlay + 同步 run;错误路径保持弹窗开启并显示 bNote(如 codex uncovered 拒启)。② Esc 标签纯装饰:三处弹窗(args/borrow/windows)统一换可点 escChip(hover+cursor),键盘 Esc 处理不变。用户实测背景:Linux→mac 反向借用,弹窗正确出现(mac 为回落目标)——门控本身工作正常。check 过(显式)。
