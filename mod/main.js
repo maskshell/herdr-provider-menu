@@ -227,7 +227,7 @@ export default class ProviderMenu extends View {
         .rounded(6).cursor_pointer().hover(s => s.bg(t.raised))
         .on_click((_e, cx) => { this.fold = { ...this.fold, [app]: !folded }; setShared(FOLD, this.fold); cx.notify(); })
         .when(icon, el => el.child(icon))
-        .child(div().text_size(11.5).font_semibold().text_color(a && a.installed === false ? t.dim : t.foreground).child(HARNESS[app].title))
+        .child(div().font_semibold().text_color(a && a.installed === false ? t.dim : t.foreground).child(HARNESS[app].title))
         .when(a && a.installed === false, el => el.child(div().text_size(10).text_color(t.dim).child("not installed")))
         .child(div().flex_1())
         .child(div().text_size(10).text_color(t.dim).child(rows.length ? String(rows.length) : ""))
