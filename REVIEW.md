@@ -305,3 +305,7 @@ A 类可自行完成项:t5-remote-e2e.md 头部标注 2026-11-20 借库实测已
 ## Pass 42 — 借用弹窗两缺陷修复(2026-11-20,用户实测报告)
 
 ① Proceed 无效:go 原为 closeOverlay 后 doLaunch(cx.spawn)——spawn 挂在对话框视图 context 上,浮层关闭即拆除,首个 await(读远端/交接 exec)处被取消,启动永不发生。修为 agent-menu 可证模式:spawn 内先 await 算完 argv,再 closeOverlay + 同步 run;错误路径保持弹窗开启并显示 bNote(如 codex uncovered 拒启)。② Esc 标签纯装饰:三处弹窗(args/borrow/windows)统一换可点 escChip(hover+cursor),键盘 Esc 处理不变。用户实测背景:Linux→mac 反向借用,弹窗正确出现(mac 为回落目标)——门控本身工作正常。check 过(显式)。
+
+## Pass 43 — terminals.json 断言改增量式(2026-11-20,用户实测疑问)
+
+用户 grep -c sk- 得 1:非新泄漏——分类核查证明 #21/#23/#25(含 live)均为交接形态(argv 仅 herdr-pm 路径,零 sk-,Phase 3 生产实证);残留是 05:25-05:37 的 Phase 3 之前内联条目(#16-20,原始借库实验),且 terminals.json 为紧凑单行 JSON,行计数恒 ≤1、绝对断言在有历史机器上无效。两处清单(t5-remote-e2e.md、验证指南)改为增量式:启动前记基线,启动后 grep -o 计数不增、新条目为 handoff 形态、/dev/shm 残留 0。附用户侧安全清旧账步骤(core 停机→删含 sk- 的 finished 条目→重启)入验证指南不在仓库。附带实证:herdr shell 适配器经 "$@" 原样透传 bash -c 词,适配器无秘密。

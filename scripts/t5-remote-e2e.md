@@ -51,7 +51,10 @@ hc --on <name> exec cat .claude/settings.json   # canary unchanged
 # --settings JSON as ITS argv, but the terminal argv recorded by core must
 # carry only the bash -c script reading /dev/shm:
 hc get <terminal>            # argv = bash -c 's="$(cat /dev/shm/herdr-pm.…)"…' — NO sk- string
-hc --on <name> exec sh -c 'grep -c sk- ~/.local/state/herdr-core/*/terminals.json'   # 0
+# terminals.json is one compact line and may carry PRE-handoff history: assert
+# a DELTA, not an absolute count (baseline before the launch, no growth after;
+# 2026-11-20 real-machine residue confusion, REVIEW Pass 43).
+hc --on <name> exec sh -c "grep -o sk- ~/.local/state/herdr-core/*/terminals.json | wc -l"   # == baseline
 hc --on <name> exec sh -c 'ls /dev/shm/herdr-pm.* 2>/dev/null | wc -l'               # 0
 ```
 
