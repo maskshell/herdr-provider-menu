@@ -150,7 +150,7 @@ E2E 中发现并修复的三个问题：
 | T2 | 进程 env vs settings env 块优先级 | ✅ Pass 6:settings 逐键赢；UNSET 降为纵深防御(仍保留) |
 | T3 | Windows pwsh 内联 JSON(P2) | ⛔ |
 | T4 | 子菜单 Esc 拦截(P1) | ✅ Pass 7 定论：拦截不可行(stop_propagation 挡不住 app 键绑定)→ fallback = 一次 Esc 全关，数字键按层作用域已验证 |
-| T5 | 远程 space:on 读+启动 | 🔶 Pass 6:prepare/e2e 脚本备妥；真机载体已就绪——本机(headless，跑 core)DB 已 seed GLM 全量 env,GUI 机三层装通即 T5 首跑 |
+| T5 | 远程 space:on 读+启动 | ✅ 关闭(2026-11-20,Pass 44):mac 实机轮双向实证——mac 读本机 DB 启动于 Linux space(交接形态,增量断言过)+ Linux 读本机 DB 启动于 mac space(回落形态+借用三键);脚本版清单留作可重复证明 |
 | T6 | sandbox 全链路 UI | ✅ T6-lite(渲染+点击+启动+env 清洗)；真 claude 未测 |
 | T8 | `--settings` × live 逐键合并泄漏 | ✅ sandbox E2E 26/26(Pass 5)+ 真 claude 2.1.327 复验(Pass 6/T2-B) |
 | T9 | seed 的 DB 被 mod 读路径接受 | ✅ 关闭(2026-11-20,Pass 41):读兼容即全部意义,GUI 半场撤销;schema 漂移被动看上游 SCHEMA_VERSION(§11) |
@@ -309,3 +309,7 @@ A 类可自行完成项:t5-remote-e2e.md 头部标注 2026-11-20 借库实测已
 ## Pass 43 — terminals.json 断言改增量式(2026-11-20,用户实测疑问)
 
 用户 grep -c sk- 得 1:非新泄漏——分类核查证明 #21/#23/#25(含 live)均为交接形态(argv 仅 herdr-pm 路径,零 sk-,Phase 3 生产实证);残留是 05:25-05:37 的 Phase 3 之前内联条目(#16-20,原始借库实验),且 terminals.json 为紧凑单行 JSON,行计数恒 ≤1、绝对断言在有历史机器上无效。两处清单(t5-remote-e2e.md、验证指南)改为增量式:启动前记基线,启动后 grep -o 计数不增、新条目为 handoff 形态、/dev/shm 残留 0。附用户侧安全清旧账步骤(core 停机→删含 sk- 的 finished 条目→重启)入验证指南不在仓库。附带实证:herdr shell 适配器经 "$@" 原样透传 bash -c 词,适配器无秘密。
+
+## Pass 44 — mac 实机轮 1-4 段全过,T5 正式关闭(2026-11-20,用户报告)
+
+验证指南段 1-4 逐项通过,正式关账:①codex Phase 2 真机(mac 为内联回落形态,official 供应商灰显提示正确,DeepSeek 启动应答正常);②面板全套(堆叠区块/单折叠/Fold all·Expand all/args Edit 芯片/rc 开关胶囊/来源机器刷新按钮/借库态标签);③手风琴换开;④借库+RAM 交接端到端:mac→Linux 无弹窗直启、交接形态 argv、增量断言过(Pass 43 证据含 live 条目);Linux→mac 回落形态、借用弹窗三键(Cancel/Proceed/Always)过——Pass 42 修复实证;⑤rc/extras 回归过。**T5 关闭**(读远端+启动远端双向真机实证)。剩余:上游 asks 提交(用户)、可选段(Windows 机/公开 flip/Discord)。mac 轮其余发现(弹窗两缺陷、grep 断言)已在 Pass 42/43 即修即闭。
