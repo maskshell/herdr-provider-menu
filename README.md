@@ -6,6 +6,12 @@ Start Claude Code and Codex in [Herdr](https://github.com/herdrdev/herdr-app) wi
 
 Claude Code and Codex are verified in the sandbox and on real machines (macOS and Linux), including cross-machine launches. Windows is not supported yet. [DESIGN.md](DESIGN.md) explains how the mod works, its decisions, and its security posture. [REVIEW.md](REVIEW.md) records the verification.
 
+![The + menu with a provider submenu](agent-menu/preview.png)
+
+![The docked provider panel](provider-menu/preview.png)
+
+The repo holds two packages, each listed on herdr.dev/mods with its own recipe and preview: `agent-menu/` (the `+` popup, two mods) and `provider-menu/` (the docked panel).
+
 ## Requirements
 
 - Herdr, the desktop app. This is a Herdr mod, not a standalone app.
@@ -19,15 +25,15 @@ Run this on the GUI machine, the machine that shows the Herdr window:
 
 ```sh
 git clone https://github.com/maskshell/herdr-provider-menu && cd herdr-provider-menu
-herdr-app do mod.clone '{"name":"new-menu","as":"agent-menu"}'
-herdr-app do mod.clone '{"name":"tabs","as":"my-tabs"}'
 herdr-app do layout.clone '{"name":"main"}'    # run when no personal layout exists yet; switch to the clone in the app
-sh scripts/p1-install.sh                        # overlays sources + patches the tabs block (idempotent)
+sh scripts/p1-install.sh                        # installs the three mods + docks the panel (idempotent)
 ```
 
 Then quit Herdr completely and open it again. The tab-bar `+` opens the menu. The Claude Code and Codex rows expand into the cc-switch providers of that machine. Each entry is one explicit identity. The digit key on a row still starts the CLI as-is.
 
-### Optional side panel
+Installing from herdr.dev/mods instead of a checkout works too: copy each package's `mods/*` into `~/.config/herdr-app/mods/` (the recipe files describe the few extra steps, such as the `+` wiring and the panel's layout block).
+
+### The side panel
 
 The panel docks into personal layouts at 280px and gives:
 
@@ -37,15 +43,7 @@ The panel docks into personal layouts at 280px and gives:
 
 The panel keeps the machine it last refreshed from. The refresh button shows the machine the shown lists came from and re-reads the active space's machine.
 
-Install:
-
-```sh
-cp -r mod/ ~/.config/herdr-app/mods/provider-menu/
-```
-
-Or copy `layouts/main-providers.json` to `~/.config/herdr-app/layouts/`. That layout ships with the panel docked.
-
-The panel block has the id `providers`. `layout.toggle {id: "providers"}` hides the panel and brings it back. A personal keybinding can carry the command, for example `"ctrl-shift-p": "layout.toggle:providers"`.
+`p1-install.sh` installs it together with the menu and docks a `providers` block into every personal layout. `layouts/main-providers.json` is a full example layout with the panel docked. Want the menu only? Delete the block from your layout, or hide it: `layout.toggle {id: "providers"}` (a personal keybinding can carry the command, for example `"ctrl-shift-p": "layout.toggle:providers"`).
 
 The rc mode turns the launch into a command string under `bash -[l]ic`. The profile runs first, so aliases and functions both apply. A plain launch runs the argv directly, without a shell parse; aliases never expand there. Parameters and dynamic environment variables can therefore live in the profile instead of this mod. For example, either form works:
 
@@ -70,10 +68,9 @@ A headless machine can also run without its own database. Refresh the panel whil
 ```sh
 git pull
 sh scripts/p1-install.sh
-cp -r mod/ ~/.config/herdr-app/mods/provider-menu/
 ```
 
-The last line applies when the side panel is installed. After a Herdr update, run the two `mod.clone` commands again before `p1-install.sh`. The shipped originals keep changing. The clones are snapshots. Then restart Herdr.
+After a Herdr update this is enough for the menu and the panel. `my-tabs` is a fork of the shipped tab bar, so stock tab-bar changes do not appear in it until the fork is refreshed: re-clone `tabs` as `my-tabs`, re-apply the one-line `+` change (see [agent-menu/RECIPE.md](agent-menu/RECIPE.md)), run the script again, restart Herdr.
 
 ## Uninstall
 
@@ -96,6 +93,7 @@ These commands return to the shipped layout. Delete the personal layout file und
 ## Further reading
 
 - [README.zh-CN.md](README.zh-CN.md), the same manual in Chinese.
+- [agent-menu/RECIPE.md](agent-menu/RECIPE.md) and [provider-menu/RECIPE.md](provider-menu/RECIPE.md): the two packages as they appear on herdr.dev/mods.
 - [DESIGN.md](DESIGN.md): architecture, launch recipes, security, tests, and the scripts reference.
 - [REVIEW.md](REVIEW.md): the verification log. The evidence sits in `evidence/`.
 - [LICENSE](LICENSE), MIT.

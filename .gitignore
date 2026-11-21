@@ -1,2 +1,7 @@
 *.pyc
 __pycache__/
+
+# the app (and `herdr-app check`) writes the dev kit into every mod dir it
+# loads; packages stay clean and the kit regenerates on the user machine
+mods/*/gpui-kit.d.ts
+mods/*/jsconfig.json

@@ -1,4 +1,4 @@
-== argv (2)
+== claude argv (2)
   [1] --settings
-  [2] {"env":{"ANTHROPIC_BASE_URL":"https://example.work","ANTHROPIC_AUTH_TOKEN":"sk-test-123","ANTHROPIC_DEFAULT_SONNET_MODEL":"glm-4.7[1m]","ANTHROPIC_DEFAULT_SONNET_MODEL_NAME":"GLM 4.7","ANTHROPIC_MODEL":"","ANTHROPIC_DEFAULT_OPUS_MODEL":"","ANTHROPIC_DEFAULT_HAIKU_MODEL":"","API_TIMEOUT_MS":""},"attribution":{},"model":"","theme":"","modelPicker":{"replaceBuiltInOptions":true,"options":[{"model":"sonnet","label":"Sonnet · GLM 4.7","description":"Work · glm-4.7 · 1M"}]}}
-== ANTHROPIC_/CLAUDE_ env
+  [2] {"env":{"ANTHROPIC_BASE_URL":"https://example.work","ANTHROPIC_AUTH_TOKEN":"sk-test-123","ANTHROPIC_DEFAULT_SONNET_MODEL":"glm-4.7[1m]","ANTHROPIC_DEFAULT_SONNET_MODEL_NAME":"GLM 4.7","ANTHROPIC_MODEL":"","ANTHROPIC_DEFAULT_OPUS_MODEL":"","ANTHROPIC_DEFAULT_HAIKU_MODEL":"","ANTHROPIC_API_TIMEOUT_MS":""},"model":"","theme":"","attribution":{},"modelPicker":{"replaceBuiltInOptions":true,"options":[{"model":"sonnet","label":"Sonnet · GLM 4.7","description":"Work · glm-4.7 · 1M"}]}}
+== env

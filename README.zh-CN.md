@@ -6,6 +6,12 @@
 
 Claude Code 与 Codex 已在 sandbox 与真机(macOS、Linux)验证，含跨机启动。Windows 暂不支持。[DESIGN.md](DESIGN.md) 说明工作原理、设计决策与安全姿态；[REVIEW.md](REVIEW.md) 记录验证过程。
 
+![带供应商子菜单的 + 菜单](agent-menu/preview.png)
+
+![停靠的供应商面板](provider-menu/preview.png)
+
+仓库含两个包，各自以独立条目(附配方与预览图)列于 herdr.dev/mods：`agent-menu/`(+ 弹窗，两个 mod)与 `provider-menu/`(停靠面板)。
+
 ## 依赖
 
 - Herdr 桌面应用。这是一个 Herdr mod，不是独立应用。
@@ -19,15 +25,15 @@ Claude Code 与 Codex 已在 sandbox 与真机(macOS、Linux)验证，含跨机�
 
 ```sh
 git clone https://github.com/maskshell/herdr-provider-menu && cd herdr-provider-menu
-herdr-app do mod.clone '{"name":"new-menu","as":"agent-menu"}'
-herdr-app do mod.clone '{"name":"tabs","as":"my-tabs"}'
 herdr-app do layout.clone '{"name":"main"}'    # 尚无个人布局时执行；随后在 app 里切换到该布局
-sh scripts/p1-install.sh                        # 覆盖源 + 给个人布局打 tabs 补丁(幂等)
+sh scripts/p1-install.sh                        # 安装三个 mod 并停靠面板(幂等)
 ```
 
 然后完全退出 Herdr 并重开。标签栏 `+` 打开菜单。Claude Code 行与 Codex 行各自展开该机的 cc-switch 供应商。每一条是一个显式身份。行上的数字键仍按原样启动 CLI。
 
-### 可选侧栏面板
+不经 checkout、直接从 herdr.dev/mods 安装也可以：把各包的 `mods/*` 复制进 `~/.config/herdr-app/mods/`(配方文件说明了少数额外步骤，例如 `+` 按钮的接线和面板的布局块)。
+
+### 侧栏面板
 
 面板以 280px 停靠进个人布局，提供：
 
@@ -37,15 +43,7 @@ sh scripts/p1-install.sh                        # 覆盖源 + 给个人布局打
 
 面板记住上次刷新所用的机器。刷新按钮显示所示列表的来源机器，并按当前 space 的机器重读。
 
-安装：
-
-```sh
-cp -r mod/ ~/.config/herdr-app/mods/provider-menu/
-```
-
-也可以把 `layouts/main-providers.json` 复制到 `~/.config/herdr-app/layouts/`。该布局自带停靠好的面板。
-
-面板块带 id `providers`。`layout.toggle {id: "providers"}` 隐藏并唤回面板。个人键位可以绑定该命令，例如 `"ctrl-shift-p": "layout.toggle:providers"`。
+`p1-install.sh` 把它与菜单一并安装，并在每个个人布局里停靠一个 `providers` 块。`layouts/main-providers.json` 是带停靠面板的完整示例布局。只想要菜单？从布局里删掉该块，或用 `layout.toggle {id: "providers"}` 隐藏(个人键位可以绑定该命令，例如 `"ctrl-shift-p": "layout.toggle:providers"`)。
 
 rc 模式把启动改为经 `bash -[l]ic` 执行的命令串：profile 先运行，alias 与 function 都会生效。普通启动不经 shell 解析，alias 从不展开。参数与动态环境变量因此可以放进 profile，而不必依赖本 mod。例如，两种写法都可以：
 
@@ -70,10 +68,9 @@ claude() {
 ```sh
 git pull
 sh scripts/p1-install.sh
-cp -r mod/ ~/.config/herdr-app/mods/provider-menu/
 ```
 
-末行仅在装有侧栏面板时需要。Herdr 升级后，先重新执行两条 `mod.clone`，再执行 `p1-install.sh`。出厂原件持续更新。克隆件是快照。随后重启 Herdr。
+Herdr 升级后，这样对菜单与面板就已足够。`my-tabs` 是出厂标签栏的分叉，出厂标签栏的改动要等分叉刷新才会出现：把 `tabs` 重新克隆为 `my-tabs`，重打那一行 `+` 接线(见 [agent-menu/RECIPE.md](agent-menu/RECIPE.md))，再执行脚本并重启 Herdr。
 
 ## 卸载
 
@@ -96,6 +93,7 @@ herdr-app do layout.switch '{"name":"main"}'
 ## 延伸阅读
 
 - [README.md](README.md)，英文主版本。
+- [agent-menu/RECIPE.md](agent-menu/RECIPE.md)与[provider-menu/RECIPE.md](provider-menu/RECIPE.md)：两个包在 herdr.dev/mods 上的条目内容。
 - [DESIGN.md](DESIGN.md)：架构、启动配方、安全、测试与 scripts 说明。
 - [REVIEW.md](REVIEW.md)：验证记录。证据在 `evidence/`。
 - [LICENSE](LICENSE)，MIT。

@@ -197,6 +197,8 @@ herdr-app do layout.clone '{"name":"main",  "as":"my-main"}'
 - `my-main`:tabs 块 `content.mod` → `"my-tabs"`(layout.clone 文档语义)。
 - 每个克隆过 `herdr-app check`。三份克隆归个人，不再随出厂更新(文档明示)。
 
+**打包(2026-11-20)**:仓库改为 herdr.dev/mods 包结构——`provider-menu/` 与 `agent-menu/` 两个包根，各含 `RECIPE.md` + `preview.png` + `mods/<mod>/`;`agent-menu` 包连 `my-tabs` 一起发(没有它 `+` 打不开弹窗)。克隆前提取消：官方安装流程就是普通复制，包里已是完整源(纯复制在 sandbox 全程验证过)。`my-tabs` 仍是出厂 tabs 的分叉，升级后需重克隆重打那一行；两包的 `providers.js` 字节一致。开发套件(`gpui-kit.d.ts`、`jsconfig.json`)上移到仓库根，不进包。
+
 **子菜单形态：行内展开**(agent 行尾 `▸`,hover/点击切 `this.sub`，子行缩进，现有 `overflow_y_scrollbar` 消化变长)。**不做 flyout**:openOverlay 的`kind:"popup"` 虽有 `at` 坐标，但元素不暴露自身绝对位置，锚不到父行。
 
 **键盘**：顶层 1-9 保持直启默认 agent；子菜单行可点击，数字/Enter 作用域随层级；Esc 拦截能否做到"只退一层"未验证(T4)，先给显式返回(再点父项)。
@@ -247,14 +249,15 @@ sandbox 是 herdr-app 仓库自带的(`scripts/sandbox`，独立 core/home/显�
 | `t2-precedence-probe.sh` + `t2-server.py` | 真 claude 优先级/泄漏探针(localhost 回显服务器、假 token;PROBE_USER/CLAUDE_BIN 可参数化) |
 | `seed-cc-switch-db.py` | 验证工具：从 spec 造单 provider 测试库(全量 DDL + user_version；消费者只有 mod 的只读查询)，非正式建库方式 |
 | `t5-remote-prepare.sh` + `t5-remote-e2e.md` | 远端机准备 + T5 E2E 清单 |
-| `p1-install.sh` | GUI 机三层安装的自检+修复(幂等；覆盖源、打布局补丁、缺克隆时打印 `do` 命令) |
+| `p1-install.sh` | GUI 机安装的自检+修复(幂等；普通复制三个 mod、个人布局补 tabs→my-tabs 并停靠 providers 块、重名非本仓 mod 时拒装并提示改名) |
 
 ### 9.2 开发与验证(2026-11-20 自 README 迁入)
 
 ```sh
 cd ../herdr-app && just build                     # Rust 1.95 + zig 0.16
-./target/debug/herdr-app check ../herdr-provider-menu/mod
-./target/debug/herdr-app check ../herdr-provider-menu/agent-menu
+./target/debug/herdr-app check ../herdr-provider-menu/provider-menu/mods/provider-menu
+./target/debug/herdr-app check ../herdr-provider-menu/agent-menu/mods/agent-menu
+./target/debug/herdr-app check ../herdr-provider-menu/agent-menu/mods/my-tabs
 scripts/sandbox up                                # UI testing lives in the sandbox, never on a real setup
 scripts/sandbox do layout.clone '{"name":"main"}'
 scripts/sandbox do space.new '{}'

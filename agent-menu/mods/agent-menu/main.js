@@ -39,7 +39,8 @@ export default class AgentMenu extends View {
     this.handle.focus();
     this.sub = null;        // harness key ("claude"/"codex") while its submenu is open
     this.providers = null;  // null = reading, [] = read done
-    this.note = "";
+    this.note = "";         // read-error string (subList hints); refusal notes
+                            // come from cardNote() — never name a method `note`
     this.launchNote = "";
     cx.spawn(async cx => {
       try {
@@ -73,11 +74,6 @@ export default class AgentMenu extends View {
       catch (e) { this.note = String(e?.message ?? e); }
       cx.notify();
     });
-  }
-
-  /// The refusal note for a non-launchable card of the open submenu's harness.
-  note(p) {
-    return cardNote(p, this.sub);
   }
 
   launchProvider(p, cx) {
@@ -158,7 +154,7 @@ export default class AgentMenu extends View {
         const n = i < 9 ? String(i + 1) : "";
         if (p.launchable === false) {
           rows.push(this.subRow("sub-" + i, p.name, cx => {
-            this.launchNote = this.note(p);
+            this.launchNote = cardNote(p, this.sub);
             cx.notify();
           }, n, "cc-switch", true));
         }
@@ -193,7 +189,7 @@ export default class AgentMenu extends View {
           const pick = (this.providers ?? [])[n - 1];
           if (!pick) return;
           if (pick.launchable === false) {
-            this.launchNote = this.note(pick);
+            this.launchNote = cardNote(pick, this.sub);
             cx.notify();
           }
           else this.launchProvider(pick, cx);

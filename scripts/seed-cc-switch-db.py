@@ -255,7 +255,8 @@ def main():
             " category, created_at, sort_index, notes, icon, icon_color, meta,"
             " is_current, in_failover_queue)"
             " VALUES (?,?,?,?,NULL,NULL,?,?,NULL,NULL,NULL,?,?,0)",
-            (f"seed-{i + 1}", "claude", p["name"], json.dumps(p.get("settings", {}),
+            (f"seed-{p.get('app_type', 'claude')}-{i + 1}", p.get("app_type", "claude"),
+             p["name"], json.dumps(p.get("settings", {}),
              ensure_ascii=False), now, p.get("sort", i),
              json.dumps(p.get("meta", {}), ensure_ascii=False),
              1 if p.get("current") else 0))
@@ -277,12 +278,12 @@ def main():
     ok = conn.execute("PRAGMA integrity_check").fetchone()[0]
     ver = conn.execute("PRAGMA user_version").fetchone()[0]
     rows = conn.execute(
-        "SELECT name, is_current FROM providers WHERE app_type='claude'"
-        " ORDER BY is_current DESC, sort_index ASC, name ASC").fetchall()
+        "SELECT app_type, name, is_current FROM providers"
+        " ORDER BY app_type ASC, is_current DESC, sort_index ASC, name ASC").fetchall()
     conn.close()
     print(f"integrity: {ok}, user_version: {ver}")
-    for name, cur in rows:
-        print(f"  provider: {name}{' (current)' if cur else ''}")
+    for app_type, name, cur in rows:
+        print(f"  provider [{app_type}]: {name}{' (current)' if cur else ''}")
     if ok != "ok" or ver != SCHEMA_VERSION:
         sys.exit("verification FAILED")
     print(f"seeded {db}")

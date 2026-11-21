@@ -1,9 +1,12 @@
 #!/bin/sh
-# P1 install — check & fix on the machine that runs the herdr-app window.
-# Usage (from a checkout/sync of this repo):  sh scripts/p1-install.sh
+# Install the herdr-provider-menu mods on the machine that runs the herdr-app
+# window. Usage (from a checkout of this repo):  sh scripts/p1-install.sh
 # Idempotent: safe to re-run. File work only; needs python3.
-# mod.clone / layout.clone need the app OPEN (they talk to the running app);
-# this script tells you when to run them and exits.
+# Two packages, three mods:
+#   provider-menu/mods/provider-menu   the docked 280px panel
+#   agent-menu/mods/agent-menu         the + popup with cc-switch submenus
+#   agent-menu/mods/my-tabs            tabs clone wiring + to that popup
+# The panel still needs a layout block: see provider-menu/RECIPE.md.
 set -eu
 
 CFG="${HERDR_APP_HOME:-$HOME/.config/herdr-app}"
@@ -12,24 +15,29 @@ MODS="$CFG/mods"
 
 echo "app home: $CFG"
 
-# --- 1. the two clones must exist (created via the app) --------------------
-missing=0
-[ -d "$MODS/agent-menu" ] || { echo "  [agent-menu] MISSING — run first:
-    herdr-app do mod.clone '{\"name\":\"new-menu\",\"as\":\"agent-menu\"}'"; missing=1; }
-[ -d "$MODS/my-tabs" ]    || { echo "  [my-tabs] MISSING — run first:
-    herdr-app do mod.clone '{\"name\":\"tabs\",\"as\":\"my-tabs\"}'"; missing=1; }
-[ "$missing" = 0 ] && echo "  clones present: agent-menu, my-tabs" || exit 1
+# --- 1. copy the three mods (plain copy is the official install flow) -------
+for m in provider-menu/mods/provider-menu agent-menu/mods/agent-menu agent-menu/mods/my-tabs; do
+  name=${m##*/}
+  if [ -d "$MODS/$name" ] && ! cmp -s "$ROOT/$m/main.js" "$MODS/$name/main.js"; then
+    if grep -q "herdr-provider-menu" "$MODS/$name/main.js" 2>/dev/null; then
+      echo "  [$name] updating (was an earlier copy of ours)"
+    else
+      echo "  [$name] name taken by a mod that is not ours — rename it first:" >&2
+      echo "      mv '$MODS/$name' '$MODS/$name.old'" >&2
+      exit 1
+    fi
+  fi
+  mkdir -p "$MODS/$name"
+  cp "$ROOT/$m"/* "$MODS/$name/"
+done
+grep -q "herdr-provider-menu" "$MODS/agent-menu/main.js" && echo "  agent-menu: ours ✓"
+grep -q 'mod: "agent-menu"' "$MODS/my-tabs/main.js" && echo "  my-tabs opens agent-menu ✓"
+grep -q 'id("provider-menu")' "$MODS/provider-menu/main.js" && echo "  provider-menu: ours ✓"
 
-# --- 2. overwrite clone sources with ours (this is the step most often missed)
-mkdir -p "$MODS/agent-menu" "$MODS/my-tabs"
-cp "$ROOT/agent-menu/main.js" "$ROOT/agent-menu/providers.js" "$ROOT/agent-menu/mod.json" "$MODS/agent-menu/"
-cp "$ROOT/my-tabs/main.js" "$MODS/my-tabs/main.js"
-grep -q "herdr-provider-menu — Phase 1" "$MODS/agent-menu/main.js" \
-  && echo "  agent-menu source: ours ✓"
-grep -q 'mod: "agent-menu"' "$MODS/my-tabs/main.js" \
-  && echo "  my-tabs opens agent-menu ✓"
-
-# --- 3. layouts: every user layout whose tabs block still points at "tabs" --
+# --- 2. layouts: dock the panel, point tab bars at my-tabs -------------------
+# The + button only opens agent-menu from my-tabs, and the panel only shows
+# when a layout has a provider-menu block. Patch personal layouts; to dock
+# into the shipped main layout, clone it first (the script says how).
 echo "layouts:"
 python3 - "$CFG/layouts" <<'EOF'
 import glob, json, os, sys
@@ -39,51 +47,48 @@ if not os.path.isdir(d) or not glob.glob(os.path.join(d, "*.json")):
     print("      herdr-app do layout.clone '{\"name\":\"main\"}'")
     print("  then switch to the clone and re-run this script")
     sys.exit(0)
-patched = already = 0
+BLOCK = {"id": "providers", "type": "block", "size": {"px": 280}, "min": 200,
+         "content": {"mod": "provider-menu"}}
+def walk(n):
+    if isinstance(n, dict):
+        c = n.get("content")
+        if isinstance(c, dict) and c.get("mod") == "tabs":
+            c["mod"] = "my-tabs"
+        for ch in n.get("children", []):
+            walk(ch)
+    elif isinstance(n, list):
+        for ch in n:
+            walk(ch)
+def has(n, mod):
+    if isinstance(n, dict):
+        c = n.get("content")
+        if isinstance(c, dict) and c.get("mod") == mod:
+            return True
+        return any(has(ch, mod) for ch in n.get("children", []))
+    if isinstance(n, list):
+        return any(has(ch, mod) for ch in n)
+    return False
+patched = docked = 0
 for p in sorted(glob.glob(os.path.join(d, "*.json"))):
     try:
         doc = json.load(open(p))
     except Exception as e:
         print("  ?", os.path.basename(p), e)
         continue
-    changed = []
-    def walk(n):
-        if isinstance(n, dict):
-            c = n.get("content")
-            if isinstance(c, dict) and c.get("mod") == "tabs":
-                c["mod"] = "my-tabs"
-                changed.append(n.get("id"))
-            for ch in n.get("children", []):
-                walk(ch)
-        elif isinstance(n, list):
-            for ch in n:
-                walk(ch)
     walk(doc)
-    if changed:
-        json.dump(doc, open(p, "w"), indent=2)
-        print(f"  patched {os.path.basename(p)}: tabs block {changed} -> my-tabs")
+    if not has(doc, "provider-menu") and isinstance(doc.get("children"), list):
+        doc["children"].append(json.loads(json.dumps(BLOCK)))
+        print(f"  docked provider-menu into {os.path.basename(p)}")
+        docked += 1
+    json.dump(doc, open(p, "w"), indent=2)
+    if has(doc, "my-tabs"):
         patched += 1
-def hasmytabs(n):
-    if isinstance(n, dict):
-        c = n.get("content")
-        if isinstance(c, dict) and c.get("mod") == "my-tabs":
-            return True
-        return any(hasmytabs(ch) for ch in n.get("children", []))
-    if isinstance(n, list):
-        return any(hasmytabs(ch) for ch in n)
-    return False
-for p in sorted(glob.glob(os.path.join(d, "*.json"))):
-    try:
-        doc = json.load(open(p))
-    except Exception:
-        continue
-    if hasmytabs(doc):
-        already += 1
-print(f"  {patched} patched, {already} layout(s) now use my-tabs")
-if not already:
-    print("  NOTE: no layout uses my-tabs — clone one first (see above)")
+print(f"  {patched} layout(s) use my-tabs, {docked} docked this run")
+if not patched:
+    print("  NOTE: no layout has a tabs block — cloned a non-main layout?")
 EOF
 
 echo
 echo "Done. Now FULLY restart Herdr (quit + reopen): mod sources load at start."
-echo "Then: tab-bar + -> Claude Code row shows 'N ▸'; click it for the provider submenu."
+echo "Then: tab-bar + -> Claude Code row shows '1 ▸'; click it for the provider"
+echo "submenu. The panel sits on the right; see the RECIPE.md files for the rest."

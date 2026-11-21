@@ -51,7 +51,7 @@
 - **env 挡键**:live-only 4 键(ANTHROPIC_MODEL、OPUS、HAIKU、API_TIMEOUT_MS)均写为 `""`；卡片自有键保留原值。dump 的 `ANTHROPIC_/CLAUDE_` env 段为空 → `env -u` ×14 照常生效。
 - **顶层挡键**：字符串 `model`/`theme` → `""`，对象 `attribution` → `{}`；数字/布尔(cleanupPeriodDays/alwaysThinkingEnabled)不写，按上游配方继承。
 - **modelPicker**:Work → 仅 sonnet 行`{label:"Sonnet · GLM 4.7", description:"Work · glm-4.7 · 1M"}` ([1m] 后缀剥离进 description 标记),replaceBuiltInOptions:true; DeepSeek → `{replaceBuiltInOptions:false, options:[]}`(live 的 GLM picker 整层被顶掉)。**总开关语义证实：picker 按层整体胜出，必须无条件写**。
-- 证据：`evidence/t8-dump-{work,deepseek}.txt`、`t8-argv-{work-t2,deepseek-t3}.json`、`t8-panel-clean.png`、`t8-tabs-launched.png`。
+- 证据：`evidence/t8-dump-{work,deepseek}.txt`、`t8-argv-{work,deepseek}.json`、`t8-panel-clean.png`、`t8-tabs-launched.png`。(Pass 47 重拍：argv 取自 `hc get`，文件名不再带终端地址后缀。)
 
 sandbox 运维教训(本轮踩坑，复用 sandbox 时先看这里):
 
@@ -313,3 +313,53 @@ A 类可自行完成项:t5-remote-e2e.md 头部标注 2026-11-20 借库实测已
 ## Pass 44 — mac 实机轮 1-4 段全过,T5 正式关闭(2026-11-20,用户报告)
 
 验证指南段 1-4 逐项通过,正式关账:①codex Phase 2 真机(mac 为内联回落形态,official 供应商灰显提示正确,DeepSeek 启动应答正常);②面板全套(堆叠区块/单折叠/Fold all·Expand all/args Edit 芯片/rc 开关胶囊/来源机器刷新按钮/借库态标签);③手风琴换开;④借库+RAM 交接端到端:mac→Linux 无弹窗直启、交接形态 argv、增量断言过(Pass 43 证据含 live 条目);Linux→mac 回落形态、借用弹窗三键(Cancel/Proceed/Always)过——Pass 42 修复实证;⑤rc/extras 回归过。**T5 关闭**(读远端+启动远端双向真机实证)。剩余:上游 asks 提交(用户)、可选段(Windows 机/公开 flip/Discord)。mac 轮其余发现(弹窗两缺陷、grep 断言)已在 Pass 42/43 即修即闭。
+
+## Pass 45 — sandbox 预览截图轮 + herdr.dev/mods 打包(2026-11-20)
+
+**截图轮(沙箱)**:两包预览图定稿。关键工程事实:① `scripts/sandbox shot` 产出是 1100px 宽的缩图(`import -window Herdr` + `magick -resize '1100x>'`),把它的坐标当窗口坐标用必错——本窗实际 1356×917,屏幕 1400×900,三个坐标系;② 窗口原点随 Weston 布局漂移,跨进程点击必带陈旧偏移;③ `sandbox-input.py` 按 `WM_NAME=="Herdr"` 找窗,而被映射的真窗口 WM_NAME 为 None,它匹配到另一窗口再加 ox/oy——指针实测偏 (+38,+59)。可行模式(单进程 uv python-xlib):查 map_state==2 的无名单窗 → `root.translate_coords(win,0,0)` 取活原点 → xtest 点击 → `win.get_image` 原生截屏(`magick -size 1356x917 -depth 8 BGRA:` 解码,BRGBA 通道序经橙色 Claude 图标验证)。弹窗几何用 `do mod.open '{"name":"agent-menu"}'` 确定性取得:折叠态 (467,307)-(886,630),Claude Code 行 374-404 中心 (676,389),展开态长到 (468,255)-(886,682)。终稿两帧均过分析器 QA:agent-menu(Claude Code ▾ 展开,Work current 1 / DeepSeek 2 / Kimi 3 / RouterX cc-switch 4,Codex 折叠 2 ▸,hover 高亮已清,单 bash 标签,无裁切)与 provider-menu(无弹窗,面板头部/args/rc/sections/两区块 4+3 行全对,无残影)。期间误点教训:`+` 按钮面板按钮命中难(一次点到 Changes 面板)→ 全程改走 `mod.open`;误点弹出行两次(展开 Codex 一次、目标移动关弹窗一次)→ 定帧测量 + 单进程活原点后成功。tab 栏清理为单原始 bash 标签(`tab.close {confirmed:true}` + terminal.kill {terminal},注意参数名是 `terminal` 非 `address`)。
+
+**打包**:仓库改包结构——`provider-menu/` 与 `agent-menu/` 两包根,各含 RECIPE.md(官方六节:# Name+段落+图/What you see/How it behaves/Built from/Watch out/Done when,AGENTS.md:490-509 已将后两节收编为官方项)+ preview.png(1356×917 原生帧)+ `mods/<mod>/`;agent-menu 包连 my-tabs 一起发(+ 按钮接线是它)。克隆前提取消:官方安装流程即普通复制,包内是完整源(sandbox 装配全程纯复制,已证)。开发套件(gpui-kit.d.ts、jsconfig.json,三份字节一致)上移仓库根,jsconfig 无 include 即覆盖全仓 JS。p1-install.sh 重写:纯复制三个 mod(官方流程)、个人布局补 tabs→my-tabs 并自动停靠 providers 块、重名且非本仓 mod 拒装提示改名;README 双语同步(去 clone 步、面板随脚本停靠、Update 节改写、延伸阅读挂两 RECIPE、篇首嵌两预览图);DESIGN §5.2 打包注记 + §9.1 表 + §9.2 路径。`tab.new` argv 参数确认为正式版能力(defaults/AGENTS.md:583),无版本门槛。check ×3 过(显式;agent-menu 有 reload 后搁浅脚本任务的调度器 WARN,非失败)。新事实:check 会向每个 mod 目录写入 gpui-kit.d.ts + jsconfig.json(jsconfig 注释自述 "Written once by gpui-shell")——包目录因此曾被种入套件,已移除并 .gitignore(`mods/*/` 两式);用户机上 app 首启自会再生,包保持纯运行时文件。/tmp/sandbox-setup.sh 复制路径同步。seed 脚本 app_type 支持随本包提交。
+
+**移交用户**:`gh repo edit maskshell/herdr-provider-menu --visibility public --accept-visibility-change-consequences` + `--add-topic herdr-mod`(herdr.dev/mods 一小时内收录);Issue 1(tab.new env 通道)草稿待其审后提交。RECIPE 已按 §6 要求披露 exec 与读取 ~/.cc-switch 之外文件(readTextFile/exec {on} 跨机、/dev/shm 写入)。
+
+## Pass 46 — 预览图暗色重拍 + 三缺陷根因(2026-11-20,用户报告)
+
+用户否掉首版预览,三缺陷:① 用户名泄露(终端提示符 <user>@<host>);② provider-menu 实为 Pi Agent 界面(遗留实验标签);③ 亮色主题。根因与修法:① core 以 passwd 真实 HOME 生成终端 shell(/proc/environ 实证,HERDR_APP_HOME 不参与),shell 读真实 ~/.bashrc 得 user@host;修 = 演示标签走 tab.new argv `bash --noprofile --norc -c "PS1='$ '; export PS1; exec bash --noprofile --norc -i"`(export 必需,否则回落 bash-5.3$)。② knownAgents 经 bash -ic 探 shell PATH(遵 rc),旧 rig 继承真实 PATH 暴露 ~/.local/bin/pi → 被诚实列为已装 → 误点启动(旧「清理」根本没关那些实验标签;当时分析器全帧 QA 也放行了 = 小字幻觉,本轮终检改放大裁片+像素测量);修 = app 以受限 PATH 启动($root/bin+系统目录,真 herdr-core 软链入内)+ 桩 claude/codex 放 rig home ~/.local/bin 且 .bashrc PATH 前置,重探后 claude/codex installed、其余(含 pi)全部 not installed。③ 无头 Weston 报亮色 → settings.json {"theme":"graphite","theme_light":"graphite","theme_dark":"graphite","dark":true} 强制暗色。
+
+**Pass 45 截图事实两处修正**:其一,1356×917 是 Weston 装饰框(WM_NAME None,外层),客户端窗是它的子窗 1280×820(WM_NAME 'Herdr')——旧预览带着窗口管理器边框,框坐标也误导了点击;正解 = 取该子窗,get_image 纯客户端帧,新预览均为 1280×820。其二,点击偏移符号:root.translate_coords(win,0,0) 给出客户端原点的 root 坐标,客户端 (tx,ty) 应落 root(原点+tx,原点+ty);Pass 45 的脚本在做减法 → 每次点击落在 (tx−38,ty−59) 弹窗外 → 一律被当 outside-click 关掉(这才是 Pass 45「点击难命中」的真因)。改加法后点击全确定性:mod.open → 点 Claude Code 行(客户端 500,345)→ 子菜单即展开;清 hover = 指针泊在死区(弹窗顶部内边距 (600,268));泊在节标题行会因展开后几何位移落在 Work 行上——死区必须选内边距带。
+
+「not installed」标签一轮:面板节头曾显 Claude/Codex not installed,两层根因——knownAgents 结果缓存在 shared 键 new-menu.agents + host 侧 SEEN 60 秒;而面板实例在 10:12 挂载时读到陈旧 false,**layout.toggle 隐藏/重显并不重挂 mod 实例**(内存 this.agents 不换),只有重启 app 才重挂。重启后节头 Claude 4 ▾ / Codex 3 ▾ 干净。探测本身证为确定(按 programs.json 原始 20 命令行 + /proc/environ 逐字环境 5 连跑,claude/codex 全中——「不稳定」是误判,实为缓存/实例陈旧)。
+
+GIF 之问的像素级答案:preview.png 是 get_image 原始转储的无损 PNG(字形边缘 255→90 单像素硬台阶、万余色),观感「压缩模糊」= GPUI 灰度反锯齿 + 查看器缩小;格式维持 PNG(herdr.dev/mods 规范固定 preview.png 文件名)。
+
+终稿 QA(放大裁片+双全帧扫描):两帧零 <user>/<host> 命中;终端裸 `$ ` 提示符;graphite 暗色;弹窗 = Claude Code ▾ 展开(Work current 1/DeepSeek 2/Kimi 3/RouterX cc-switch 4)+ Codex 折叠 2 ▸ + Pi·OpenCode 灰显 not installed(出厂 + 菜单本就列全部已知 agent,灰显对比恰说明只装了 claude/codex);面板 = args/rc/sections + 两区块 4+3 行,无「not installed」;底栏 This computer/0 agents/Ctrl+Shift+P。提交 303b6b3 已推(6cf140b..303b6b3,master 上游已挂)。
+
+## Pass 47 — note 渲染回归修复 + 证据全暗色重拍 + GIF 预览(2026-11-20,用户点名)
+
+**回归修复(本轮头号)**:agent-menu 的拒绝 note 自 4a7b2a1 起从未渲染——实例字段 `this.note`(读库错误串)遮蔽了同名原型方法 `note(p)`,`this.note(p)`/`this.note(pick)` 实为 `""(...)` → quickjs 抛 "not a function"。键盘路径在 app.log 留栈(`error in key handler: not a function at main.js:196:41`),鼠标路径在 on_click 内同样静默死;11-19 验证通过时(note 为内联拼接文案,ec719f1/8bbf6ac)尚无此方法,4a7b2a1 抽共享 cardNote 时引入 wrapper 即撞名。修 = 删 wrapper,两处直调 `cardNote(p, this.sub)`,字段注释注明永不命名方法为 note。修后 sandbox 双路径逐字渲染("RouterX is not an env-form API card (official or routed?) — switch to it in cc-switch, not here."两行,p1-routerx-note*.png)。provider-menu 无此问题(直调 cardNote)。
+
+**展开态几何定标(纠正 Pass 46 的行位误标)**:折叠 Terminal 284/header 318/Claude 345;展开后整个弹窗内容上移约 54px——Terminal 230/header 264/Claude 291/子菜单 Work 320/DeepSeek 348/Kimi 374/**RouterX 401**/Codex 430/Pi 461/OpenCode 493/New space 527/note 两行 499+517(带 note 再上移 22px)。此前扫描窗从 y300 起,漏掉顶部两带 → 行位整体误标 54px:Pass 46 的"点 374=Work"实为 Kimi(经 core 继承的用户 PATH 启动了真 claude,trust 对话框,tab 已关),"461=RouterX"实为 Pi(dim 顶层行,按设计 no-op)——两桩"点不中"皆是打错行,非命中分发问题。xtest 特性:指针远跳后的单次 motion+click 会丢失命中(独立 @motion 到位、停 0.5s、再点击则全确定性);泊指针必须 motion-only——带 press 的"泊"就是一次 outside-click,直接关弹窗。
+
+**stub/HOME 教训**:core 终端继承 core 进程 HOME(/proc/environ 实证 = 真实家目录)——stub 的 `$HOME/claude-launch-dump.txt` 一度写进真实家目录(3 分钟内删除,内容仅 fixture 凭据 + core env 泄漏的模型名变量,无真实 token);修 = stub 写绝对路径,env 观察收窄到凭据面(AUTH_TOKEN/BASE_URL/API_KEY/CUSTOM_HEADERS/OAUTH*)。$root/bin 在 tab 终端 PATH 首位,claude/codex 桩已入其中——面板启动均命中桩,dump 落 sandbox home。
+
+**证据重拍(11 图全暗色、零身份泄漏,×0.8594=1100×705,面板裁 396×820→340×705)**:p1-menu-popup/p1-submenu-expanded(无 hover)/p1-routerx-note(鼠标)/p1-routerx-note-keyboard(键盘)/t6-panel-rendered+t6-tab-launched+t6-launch-dump/t8-panel-clean+t8-tabs-launched+t8-dump-{work,deepseek}+t8-argv-{work,deepseek}(hc get,现行 /dev/shm 交接形态)/t10-panel-3rows+t10-refusal+t10-argv-{work,deepseek}。金丝雀 live settings.json 按 Pass 5 形态重建;dual 断言照旧——Work 卡键保留+live-only 4 键置 ""+model/theme ""+attribution {}+modelPicker 双语义(Sonnet·GLM 4.7 行 replaceBuiltInOptions:true / DeepSeek 空 options:false);env 段零凭据。p1-t4-esc-before.png 弃:Esc"一次全关"是 Pass 7 定论的验收行为,无 before/after 可截,REVIEW/DESIGN 亦无引用。Esc 本轮再证:note+子菜单态按 Esc 即全关(stop_propagation 挡不住 app 键绑定,与定论一致)。
+
+**GIF 预览(用户点名)**:两包 preview.gif 直接从 get_image 原始 BGRA 位图编码(magick `BGRA:` 子表达式内联裁剪,不经任何中间文件;PNG 中转本就无损——双路产物逐字节相同可为证)。agent-menu 440×500 三帧(折叠 1.3s→展开 1.3s→note 2s)34KB;provider-menu 305×760 两帧(面板干净 1.5s→拒绝 note 2.2s)12.6KB。README 双语内嵌改 GIF;herdr.dev/mods 规范仍收 preview.png(两包均保留)。GIF 文字 200% 放大可见调色板量化软边,100% 展示尺寸可读;面板裁剪内看不到 tab 标题(在窗口左端),故 provider GIF 只做"干净→拒绝 note"两态,启动叙事留给静态图。
+
+**历史清洗**:上述 11 张旧亮色 PNG(真机身份像素)各存在于恰 1 个历史提交,filter-repo --strip-blobs 按旧 blob SHA 剥除后 force push,tag v0.1.0 重指新历史(旧 blob 于 rev-list --objects --all 验空)。
+
+## Pass 48 — retina 2× 密度全量重拍(2026-11-21,用户报告 macOS retina 仍糊)
+
+**根因**:Pass 47 的图按 1× 逻辑像素抓取(全幅 1280×820→缩 1100×705),retina 默认分辨率下查看器需把 1280px 宽上采样到约 1660 物理px——糊感来自像素密度不足,与 GPUI 渲染/AA(Xwayland 整数像素、灰度 AA、单像素硬边已证)无关。GIF 路线同因不治本,弃(两包 preview.gif 删除,README 双语内嵌回退 preview.png)。
+
+**2× 方案**:settings.json `"zoom": 2.0`(settings.rs set_pixel_scale 直驱,0.5..3.0 合法)+ window.json `{"state":"windowed","bounds":[70,80,2560,1640]}`(place.rs 首启 1280×820 默认,尺寸由该文件记忆)→ 客户端 2560×1640 = 完整逻辑布局的 2× 物理像素,herdr.dev/mods 要求的文件名 preview.png 不变。私有 rig:weston headless 2700×1800(socket herdr-app-2x)+ rig env 起调试构建;app 找不到 herdr-core 时只弹安装引导(620×460 小窗),$root/bin 需软链真 core/hc。共享状态在 `$home/shared.json` 顶层(非 state/ 子目录):`{"layout":"main-providers","frame.welcomed":"skipped"}` 一次定布局并跳过欢迎弹窗。
+
+**重拍(11 PNG 全部原生 2×,零缩放;txt/json 证据与缩放无关,原样保留)**:p1-* 弹窗场景裁 x820-1700/y470-1250(880×780);t6-tab-launched/t8-tabs-launched/t10-refusal 全幅 2560×1640;面板裁 x1768-2560(792 宽)。场景状态:z5 收起菜单、z9 干净展开(Work current·1/DeepSeek·2/Kimi·3/RouterX cc-switch·4)、wd 鼠标路径 note、w8 键盘"4"note(note 文本"RouterX is not an env-form API card (official or routed?) — switch to it in cc-switch, not here.")、z7 单 tab 启动、wf 双 tab(Claude (DeepSeek)+Claude (Work))、wh 面板 Packless 拒绝("Launch failed: Packless has no route of its own — switch to it in cc-switch first.")。
+
+**工具链定则(用户点名的方案选型)**:几何验证一律 scan-bands.py(确定性像素测量);读屏幕文字用本地 CPU OCR——`uv run --python 3.12 --with rapidocr-onnxruntime`(onnxruntime 无 cp315 wheel,必须钉 3.12;z.ai analyze_image 仅留作"看图说话"兜底,本 Pass 两次调用分别定位 herdr-core 缺失引导弹窗与确认 Size 200% 生效)。rapidocr 在 2× 密度深色 UI 上置信度 0.9-1.0,弹窗/面板/拒绝 note 全文可读。
+
+**xtest 三陷阱(Pass 47 协议的修正)**:①展开态弹窗有两个相差 109px 的锚位——note 使高度超 491 逻辑上限后中段滚动、内容整体移位,按旧坐标连击必错位(本轮两次误启动 DeepSeek/t4 均此因,已关停清理);铁律=每次点击之间重新实测落点。②单击可能纯丢失(无任何效果),同坐标补击即中;③Read 工具在本环境只回 CDN URL 不显图,语义识别外部工具或本地 OCR 二选一。tab 误关可由 view.json 的 tabs 键序恢复;`hc ls` 的 address(t1..tN)与 view.json 的 tab id 是两套标识。
+
+**pHYs 修复(2026-11-21,用户在 macOS retina 复验)**:2× 图在看图软件里感官放大一倍、缩到 50% 才恢复自然大小与锐度——像素内容本就正确,缺的是 DPI 元数据(默认按 72/96 DPI 解释→2× 像素=2× 尺寸)。全部新 PNG 补写 pHYs 144 PPI(magick `-units PixelsPerInch -density 144`,等价 56.69 px/cm),macOS 预览按原尺寸渲染且 retina 点对点锐利;像素数据逐字节不变。
+
+**泄漏修复(2026-11-21,用户发现)**:t6-tab-launched.png 全幅左栏终端提示符带出真机 ``<user>@<host>:~$``(\u@\h 默认 PS1)——Pass 48 重拍时 OCR 输出在眼前仍漏检,教训:凡新帧必按身份词全量扫描,不能只查面板/弹窗。修复=rig .bashrc 设中性 `PS1='\w \$ '`(登录链路已通,PATH 同路生效可证),重拍同场景(tab Claude (DeepSeek)+~ $ 提示符);两字符提示符 rapidocr 读不出(非漏,是无字可读),像素直方图(#96B2D7 路径蓝+#D2D4D9 $)与放大裁图可证渲染正确。全库 PNG 复扫零命中(实测 12 张);update-notes.json 需预置 presented 否则重启后左下冒"Updated to 0.1.16"更新条。
