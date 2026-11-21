@@ -25,11 +25,10 @@ Run this on the GUI machine, the machine that shows the Herdr window:
 
 ```sh
 git clone https://github.com/maskshell/herdr-provider-menu && cd herdr-provider-menu
-herdr-app do layout.clone '{"name":"main"}'    # run when no personal layout exists yet; switch to the clone in the app
-sh scripts/p1-install.sh                        # installs the three mods + docks the panel (idempotent)
+sh scripts/p1-install.sh    # mods in, a main clone named after you built, the panel docked (idempotent)
 ```
 
-Then quit Herdr completely and open it again. The tab-bar `+` opens the menu. The Claude Code and Codex rows expand into the cc-switch providers of that machine. Each entry is one explicit identity. The digit key on a row still starts the CLI as-is.
+Then quit Herdr completely and open it again (the script switches you there when Herdr cannot be driven live). The tab-bar `+` opens the menu. The Claude Code and Codex rows expand into the cc-switch providers of that machine. Each entry is one explicit identity. The digit key on a row still starts the CLI as-is.
 
 Installing from herdr.dev/mods instead of a checkout works too: copy each package's `mods/*` into `~/.config/herdr-app/mods/` (the recipe files describe the few extra steps, such as the `+` wiring and the panel's layout block).
 
@@ -38,12 +37,13 @@ Installing from herdr.dev/mods instead of a checkout works too: copy each packag
 The panel docks into personal layouts at 280px and gives:
 
 - The cc-switch providers of each harness, in stacked sections that fold.
+- A close ✕ in the header and a "Providers" pill in the tab bar: the panel hides and comes back, and the state survives restarts. A key can do the same without a tab-bar edit (`alt-p`; `cmd-shift-b` on macOS).
 - An `args` row per machine: persistent extra parameters, for example `--allow-dangerously-skip-permissions`. The mod itself adds no parameter. The recorded row is the only way one enters a launch.
 - An `rc profile` row per machine: run launches through the shell profile, so shell aliases and functions apply. Off by default.
 
 The panel keeps the machine it last refreshed from. The refresh button shows the machine the shown lists came from and re-reads the active space's machine.
 
-`p1-install.sh` installs it together with the menu and docks a `providers` block into every personal layout. `layouts/main-providers.json` is a full example layout with the panel docked. Want the menu only? Delete the block from your layout, or hide it: `layout.toggle {id: "providers"}` (a personal keybinding can carry the command, for example `"ctrl-shift-p": "layout.toggle:providers"`).
+`p1-install.sh` installs it together with the menu, docks a `provider-menu-panel` block into every personal layout, and builds a clone of Herdr's shipped `main` named after you (`main-<username>`; full-width tab bar with the reopen pill, the panel beside the terminal-and-status column). No layout file ships in this repo and nothing is copied by hand. Want the menu only? Delete the block from your layout, or hide it: `layout.toggle {id: "provider-menu-panel"}` (a personal keybinding can carry the command, for example `"alt-p": "layout.toggle:provider-menu-panel"` — on macOS use `cmd-shift-b`; `alt` is the option key there and ⌥P types π).
 
 The rc mode turns the launch into a command string under `bash -[l]ic`. The profile runs first, so aliases and functions both apply. A plain launch runs the argv directly, without a shell parse; aliases never expand there. Parameters and dynamic environment variables can therefore live in the profile instead of this mod. For example, either form works:
 
@@ -70,7 +70,7 @@ git pull
 sh scripts/p1-install.sh
 ```
 
-After a Herdr update this is enough for the menu and the panel. `my-tabs` is a fork of the shipped tab bar, so stock tab-bar changes do not appear in it until the fork is refreshed: re-clone `tabs` as `my-tabs`, re-apply the one-line `+` change (see [agent-menu/RECIPE.md](agent-menu/RECIPE.md)), run the script again, restart Herdr.
+After a Herdr update this is enough for the menu, the panel and your clone layout: the script creates your clone **once** (`main-<username>`; an earlier `main-providers` is renamed to it, tweaks kept) and from then on treats it as yours — your edits survive re-runs; refresh it by deleting the file and re-running (the same contract as the my-tabs fork). Layouts with their own look (a win98 clone, say) are skipped: the panel targets the main window. It never touches Herdr's own layout files (an edited shipped file is moved aside by the app as `<name>-edited(-N)` copies). `my-tabs` is a fork of the shipped tab bar, so stock tab-bar changes do not appear in it until the fork is refreshed: re-clone `tabs` as `my-tabs`, re-apply the one-line `+` change (see [agent-menu/RECIPE.md](agent-menu/RECIPE.md)), run the script again, restart Herdr.
 
 ## Uninstall
 
@@ -79,7 +79,7 @@ rm -rf ~/.config/herdr-app/mods/agent-menu ~/.config/herdr-app/mods/my-tabs ~/.c
 herdr-app do layout.switch '{"name":"main"}'
 ```
 
-These commands return to the shipped layout. Delete the personal layout file under `~/.config/herdr-app/layouts/` when it is no longer wanted. The recorded `args` and `rc profile` values stay in Herdr's shared state. They do nothing once the mods are gone.
+These commands return to the shipped layout. Delete the personal layout file under `~/.config/herdr-app/layouts/` when it is no longer wanted. The recorded `args` and `rc profile` values stay in Herdr's shared state. They do nothing once the mods are gone. If the keyboard form was installed, also remove the `alt-p` binding (`cmd-shift-b` on macOS; the `layout:<name>` section) from `~/.config/herdr-app/keys.json`. A personal layout kept on disk still carries the panel and toggle blocks and its wrapped tab bar; delete the file, or remove those two nodes and unwrap the tab bar, to clean it fully.
 
 ## Limits
 

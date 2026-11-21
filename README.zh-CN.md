@@ -25,11 +25,10 @@ Claude Code 与 Codex 已在 sandbox 与真机(macOS、Linux)验证，含跨机�
 
 ```sh
 git clone https://github.com/maskshell/herdr-provider-menu && cd herdr-provider-menu
-herdr-app do layout.clone '{"name":"main"}'    # 尚无个人布局时执行；随后在 app 里切换到该布局
-sh scripts/p1-install.sh                        # 安装三个 mod 并停靠面板(幂等)
+sh scripts/p1-install.sh    # 装入 mod、生成以你命名的 main 克隆、停靠面板(幂等)
 ```
 
-然后完全退出 Herdr 并重开。标签栏 `+` 打开菜单。Claude Code 行与 Codex 行各自展开该机的 cc-switch 供应商。每一条是一个显式身份。行上的数字键仍按原样启动 CLI。
+然后完全退出 Herdr 并重开(脚本在无法活切时会安排下次启动切换)。标签栏 `+` 打开菜单。Claude Code 行与 Codex 行各自展开该机的 cc-switch 供应商。每一条是一个显式身份。行上的数字键仍按原样启动 CLI。
 
 不经 checkout、直接从 herdr.dev/mods 安装也可以：把各包的 `mods/*` 复制进 `~/.config/herdr-app/mods/`(配方文件说明了少数额外步骤，例如 `+` 按钮的接线和面板的布局块)。
 
@@ -38,12 +37,13 @@ sh scripts/p1-install.sh                        # 安装三个 mod 并停靠面�
 面板以 280px 停靠进个人布局，提供：
 
 - 各 harness 的 cc-switch 供应商列表，按堆叠区块分组，可折叠。
+- 头部的关闭 ✕ 与 tab 栏的 “Providers” 重开钮：面板可收起、可复原，状态重启后保留。也可以用键位实现且不动 tab 栏(`alt-p`；macOS 为 `cmd-shift-b`)。
 - 每机一个 `args` 行：持久附加参数，例如 `--allow-dangerously-skip-permissions`。本 mod 自身不添加任何参数。参数进入启动的唯一途径是这个被记录的行。
 - 每机一个 `rc profile` 行：经 shell profile 运行启动，shell 的 alias 与 function 因此生效。默认关闭。
 
 面板记住上次刷新所用的机器。刷新按钮显示所示列表的来源机器，并按当前 space 的机器重读。
 
-`p1-install.sh` 把它与菜单一并安装，并在每个个人布局里停靠一个 `providers` 块。`layouts/main-providers.json` 是带停靠面板的完整示例布局。只想要菜单？从布局里删掉该块，或用 `layout.toggle {id: "providers"}` 隐藏(个人键位可以绑定该命令，例如 `"ctrl-shift-p": "layout.toggle:providers"`)。
+`p1-install.sh` 把它与菜单一并安装，在每个个人布局里停靠一个 `provider-menu-panel` 块，并从 Herdr 自带的出厂 `main` 克隆一份以你命名的布局(`main-<用户名>`；满宽 tab 栏带重开钮，面板与「终端+状态栏」整组平行)。仓库不带布局文件，也不需要手动拷贝任何 JSON。只想要菜单？从布局里删掉该块，或用 `layout.toggle {id: "provider-menu-panel"}` 隐藏(个人键位可以绑定该命令，例如 `"alt-p": "layout.toggle:provider-menu-panel"`；macOS 用 `cmd-shift-b`——那里 alt 是 option 键，⌥P 会打出 π)。
 
 rc 模式把启动改为经 `bash -[l]ic` 执行的命令串：profile 先运行，alias 与 function 都会生效。普通启动不经 shell 解析，alias 从不展开。参数与动态环境变量因此可以放进 profile，而不必依赖本 mod。例如，两种写法都可以：
 
@@ -70,7 +70,7 @@ git pull
 sh scripts/p1-install.sh
 ```
 
-Herdr 升级后，这样对菜单与面板就已足够。`my-tabs` 是出厂标签栏的分叉，出厂标签栏的改动要等分叉刷新才会出现：把 `tabs` 重新克隆为 `my-tabs`，重打那一行 `+` 接线(见 [agent-menu/RECIPE.md](agent-menu/RECIPE.md))，再执行脚本并重启 Herdr。
+Herdr 升级后，这样对菜单、面板与你的克隆布局就已足够：脚本**创建一次**你的克隆(`main-<用户名>`；旧的 `main-providers` 会改名迁移、微调保留)，此后视为你的文件——改动在重跑后保留，想刷新就删掉再跑(与 my-tabs 分叉同款契约)。带独立外观的布局(如 win98 克隆)会被跳过：面板以默认窗口为目标。脚本绝不触碰 Herdr 自己的布局文件(出厂文件一旦被改，app 下次启动会把它搬成 `<name>-edited(-N)` 副本)。`my-tabs` 是出厂标签栏的分叉，出厂标签栏的改动要等分叉刷新才会出现：把 `tabs` 重新克隆为 `my-tabs`，重打那一行 `+` 接线(见 [agent-menu/RECIPE.md](agent-menu/RECIPE.md))，再执行脚本并重启 Herdr。
 
 ## 卸载
 
@@ -79,7 +79,7 @@ rm -rf ~/.config/herdr-app/mods/agent-menu ~/.config/herdr-app/mods/my-tabs ~/.c
 herdr-app do layout.switch '{"name":"main"}'
 ```
 
-以上命令执行后回到出厂布局。不需要的个人布局文件(`~/.config/herdr-app/layouts/` 下)可以删除。记录过的 `args` 与 `rc profile` 值留在 Herdr 共享状态里。mod 移除后它们不再起作用。
+以上命令执行后回到出厂布局。不需要的个人布局文件(`~/.config/herdr-app/layouts/` 下)可以删除。记录过的 `args` 与 `rc profile` 值留在 Herdr 共享状态里。mod 移除后它们不再起作用。若装过键位形态，把 `~/.config/herdr-app/keys.json` 里的 `alt-p` 绑定(macOS 为 `cmd-shift-b`；`layout:<名字>` 段)一并移除。保留在磁盘上的个人布局仍带面板块与重开钮块，tab 栏也仍是包过的；删掉该文件，或移除这两个节点并把 tab 栏解包，才算清理干净。
 
 ## 制约
 

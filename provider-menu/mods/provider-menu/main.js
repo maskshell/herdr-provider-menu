@@ -3,7 +3,7 @@
 // per-agent submenus; providers.js carries over unchanged.
 import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
-import { theme, spaces, run, shared, setShared, window, checking, props, openOverlay, closeOverlay, knownAgents } from "herdr";
+import { theme, spaces, run, shared, setShared, window, checking, props, openOverlay, closeOverlay, knownAgents, layout } from "herdr";
 import { readProviders, launchArgv, handoffAvailable, machinePlatform, EXTRA, RC, HARNESS, cardNote } from "./providers.js";
 
 /// shared() key for the last good read of one harness (instant open, re-check).
@@ -21,8 +21,55 @@ const KNOWN = "new-menu.agents";
 /// the panel asks once per pair before transporting a credential).
 const BORROW = "provider-menu.borrowOk";
 
+/// Run fn after this render settles (cx.spawn hands the body a fresh cx, so
+/// nothing retains the render's own context beyond its callback).
+const later = (cx, fn) => cx.spawn(async (cx) => { await cx.sleep(0); return fn(cx); });
+
+/// The panel's own place in the shown layout: the block whose content.mod is
+/// this mod and whose role is not "toggle" (the toggle is a separate block).
+/// Returns [parent, node], or null when the layout doesn't mount the panel.
+/// Discovery instead of a contracted node id, so the close button also works
+/// for the app's auto-dock (a fresh random id) and for any hand-added block.
+function findPanel(root) {
+  const visit = (n, parent) => {
+    if (n?.content?.mod === "provider-menu" && n.content.props?.role !== "toggle")
+      return [parent, n];
+    for (const child of n?.children ?? []) { const hit = visit(child, n); if (hit) return hit; }
+    return null;
+  };
+  return visit(root, null);
+}
+
+/// What a close or a toggle aims at: the block itself, or the container that
+/// holds nothing but the panel (a hand-added dock column, or the auto-dock
+/// wrapper). Hiding only the block inside such a column would leave the
+/// column's width on screen as an empty strip.
+function panelTarget() {
+  const found = findPanel(layout());
+  if (!found) return null;
+  const [parent, node] = found;
+  return parent && (parent.children ?? []).length === 1 ? parent : node;
+}
+
+/// Whether the layout also mounts a toggle block (props.role === "toggle").
+/// The close button is drawn only when it does: a hidden panel with no toggle
+/// anywhere has no visible way back (only `herdr-app do layout.show`), so a
+/// layout without the pill keeps the panel permanently shown instead. The
+/// two blocks ship as a pair in the layout and in the recipe's install.
+function hasToggle() {
+  const visit = (n) => {
+    if (n?.content?.mod === "provider-menu" && n.content.props?.role === "toggle") return true;
+    return (n?.children ?? []).some(visit);
+  };
+  return visit(layout());
+}
+
 export default class ProviderMenu extends View {
   init(_props, cx) {
+    // Toggle mode (props.role === "toggle"): the tab-bar pill that shows or
+    // hides the docked panel. It reads nothing and stays cheap; the panel's
+    // own init below is skipped entirely.
+    if (props()?.role === "toggle") { this.isToggle = true; return; }
     // Dialog mode: the panel opens itself as a small overlay to edit the
     // per-machine extra args (props.mode === "args", the prompt-mod pattern),
     // or to confirm a cross-machine launch (props.mode === "borrow").
@@ -64,6 +111,7 @@ export default class ProviderMenu extends View {
     this.agents = shared(KNOWN)?.[""] ?? []; // section icons render at once, re-check below
     this.note = "";
     this.launchNote = "";
+    this.wasHidden = null; // tri-state: null until the first render says shown/hidden
     // check runs init for real but exec would warn: read-only, still skip it.
     if (!checking()) {
       this.refresh(cx);
@@ -391,10 +439,51 @@ export default class ProviderMenu extends View {
           .on_click(() => closeOverlay(p.overlay)).child("OK")));
   }
 
-  render() {
+  /// The tab-bar toggle pill: one click shows or hides the docked panel. The
+  /// layout node's own hidden flag is the state — the same node the panel's
+  /// close button hides — so the two controls always agree and open/closed
+  /// survives restarts (the skillshare pattern; our node is discovered rather
+  /// than contracted by id). Inert when the layout doesn't mount the panel.
+  toggleBar() {
+    const t = theme();
+    const target = panelTarget();
+    const on = Boolean(target && !target.hidden);
+    return h_flex().size_full().pl(6).pr(10).items_center().bg(t.chrome).border_b(1).border_color(t.border)
+      .child(h_flex().id("panel-toggle").h(26).px(9).items_center().rounded(6)
+        .text_size(12).bg(on ? t.selected : t.chrome).text_color(on ? t.foreground : t.muted)
+        .hover(s => s.bg(t.hover)).cursor_pointer()
+        .on_click(() => { if (target) run("layout.toggle", { id: target.id }); })
+        .child("Providers"));
+  }
+
+  /// The header's close ×: hides the panel's layout node. Drawn only when a
+  /// toggle block exists to bring the panel back (closable above): a layout
+  /// without the pill keeps the panel permanently shown rather than closable
+  /// with no visible way back.
+  closeChip(t, target) {
+    return h_flex().id("close").size(20).flex_none().items_center().justify_center().rounded(6)
+      .text_size(11).text_color(t.dim).cursor_pointer()
+      .hover(s => s.bg(t.selected))
+      .on_click(() => run("layout.hide", { id: target.id }))
+      .child("✕");
+  }
+
+  render(cx) {
+    if (this.isToggle) return this.toggleBar();
     if (this.dialog) return props()?.mode === "windows" ? this.windowsDialog() : props()?.mode === "borrow" ? this.borrowDialog() : this.argsDialog();
     const t = theme();
     const unix = window()?.platform !== "windows";
+    // Re-read when the panel comes back from hidden (the toggle reopened it):
+    // cached rows render at once either way; the reveal is the one moment a
+    // stale cache would otherwise sit on screen unchallenged.
+    const target = panelTarget();
+    // The ✕ needs its way back: draw it only when a toggle block exists in
+    // the layout to reopen the panel (see hasToggle). Target null → nothing
+    // to close anyway.
+    const closable = Boolean(target && hasToggle());
+    const shownNow = Boolean(target && !target.hidden);
+    if (shownNow && this.wasHidden === true && !checking()) later(cx, cx2 => this.refresh(cx2));
+    this.wasHidden = !shownNow;
     return v_flex().id("provider-menu").size_full().bg(t.surface).p(6).gap(2).text_size(12.5)
       .child(h_flex().id("header").px(6).py(4).gap(6).items_center()
         .child(div().font_semibold().child("Providers"))
@@ -405,7 +494,8 @@ export default class ProviderMenu extends View {
           .hover(s => s.bg(t.selected))
           .on_click((_e, cx) => this.refresh(cx))
           .child(div().text_size(11).child("↻"))
-          .child(div().text_size(10).text_color(t.dim).child(this.srcLabel()))))
+          .child(div().text_size(10).text_color(t.dim).child(this.srcLabel())))
+        .when(closable, el => el.child(this.closeChip(t, target))))
       .child(this.argsRow())
       .child(this.rcRow())
       .child(this.foldRow())

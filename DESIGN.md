@@ -317,3 +317,5 @@ check 的输出必须显式查看——2026-11-20 曾因 `2>/dev/null` 吞掉失
 6. **UNSET 前缀** — settings 的 env 块只能设置不能取消；rc 串扰是 cc-switch桌面版已证实的问题(T2 可能简化)。
 7. **行内展开子菜单，不做 flyout** — 元素无绝对位置，锚定做不到。
 8. **P0 先独立面板，再三层克隆集成** — 先证链路，再动 UI；克隆是不可逆地脱离出厂更新的，值得推迟到链路已证。
+9. **面板开合按 content 发现，不约定 id**(2026-11-22，Pass 49)——✕/pill 以 `content.mod === "provider-menu"` 自查节点，对自动停靠(随机 id)/手改块/约定块一律成立；与 skillshare(约定 id)同装不冲突。防呆守卫：布局无 toggle 块则不画 ✕(可关必有可见回路)；键路径(alt-p / mac cmd-shift-b)以键为双向回路，同样无陷阱。
+10. **安装器不拥有布局，create-once 克隆**(2026-11-22，Pass 49)——仓库不带布局文件；脚本从 app 维护的出厂 `main` 生成一次 `main-<用户名>`(带 cloned_from 标记)，此后视为用户的(add-only 幂等维护，刷新=删文件重跑，与 my-tabs 同契约)。绝不改出厂布局(app 会搬成 `<name>-edited(-N)`)；血统检测(cloned_from)跳过 win98/terminals 系(自带外观)；仅当前在出厂 main 上才自动切换，其余保留用户选择。

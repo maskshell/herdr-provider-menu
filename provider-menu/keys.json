@@ -1,0 +1,5 @@
+{
+  "layout:main-providers": {
+    "alt-p": "layout.toggle:provider-menu-panel"
+  }
+}
