@@ -6,7 +6,9 @@
 #   provider-menu/mods/provider-menu   the docked 280px panel
 #   agent-menu/mods/agent-menu         the + popup with cc-switch submenus
 #   agent-menu/mods/my-tabs            tabs clone wiring + to that popup
-# The panel still needs a layout block: see provider-menu/RECIPE.md.
+# Plus the layout work: a once-created main clone named after you (panel +
+# reopen pill docked), the panel docked into your other personal layouts,
+# and the alt-p / cmd-shift-b toggle key. Herdr reloads keys.json live.
 set -eu
 
 CFG="${HERDR_APP_HOME:-$HOME/.config/herdr-app}"
@@ -193,7 +195,16 @@ def wrap_tabs(n):
             if wrap_tabs(ch):
                 return True
     return False
+def has_id(n, i):
+    if isinstance(n, dict):
+        if n.get("id") == i:
+            return True
+        return any(has_id(ch, i) for ch in n.get("children", []))
+    if isinstance(n, list):
+        return any(has_id(ch, i) for ch in n)
+    return False
 patched = docked = pilled = skipped = 0
+managed = []
 for p in sorted(glob.glob(os.path.join(d, "*.json"))):
     base = os.path.basename(p)[:-5]
     if base in SHIPPED:
@@ -219,7 +230,61 @@ for p in sorted(glob.glob(os.path.join(d, "*.json"))):
     json.dump(doc, open(p, "w"), indent=2)
     if has(doc, "my-tabs"):
         patched += 1
+    if has_id(doc, "provider-menu-panel"):
+        managed.append(base)
 print(f"  {patched} personal layout(s) use my-tabs, {docked} docked, {pilled} pilled, {skipped} skipped this run")
+
+# --- the same toggle under a key ------------------------------------------------
+# alt-p; cmd-shift-b on macOS, where alt is the option key and option+letter
+# types a character. Bound in every personal layout that carries the panel
+# under its fixed id (the command needs the id). Herdr reloads keys.json
+# live, so the key works as soon as the script has run. An existing binding
+# at the key is the person's and is never touched.
+key = "cmd-shift-b" if os.uname().sysname == "Darwin" else "alt-p"
+VAL = "layout.toggle:provider-menu-panel"
+kp = os.path.normpath(os.path.join(d, "..", "keys.json"))
+had_file = os.path.exists(kp)
+parsed = True
+try:
+    keys = json.load(open(kp))
+    if not isinstance(keys, dict):
+        raise ValueError("not an object")
+except Exception:
+    parsed = False
+    if had_file:
+        print("  ! keys.json did not parse — rewritten (its other bindings were unreadable)")
+    keys = {}
+kerr = os.path.normpath(os.path.join(d, "..", "keys.error"))
+moved = False
+leg = keys.get("layout:" + LEGACY)           # the package template's old section name
+if isinstance(leg, dict):
+    for k in [k for k, v in leg.items() if v == VAL]:
+        del leg[k]
+        moved = True
+    if not leg:
+        del keys["layout:" + LEGACY]
+bound = kept = 0
+for name in managed:
+    sec = keys.setdefault("layout:" + name, {})
+    if not isinstance(sec, dict):
+        print(f"  ! keys.json 'layout:{name}' is not an object — left alone")
+        continue
+    if key in sec and sec[key] != VAL:
+        kept += 1
+        continue
+    if sec.get(key) != VAL:
+        sec[key] = VAL
+        bound += 1
+if bound or moved:
+    json.dump(keys, open(kp, "w"), indent=2)
+if not parsed and had_file and os.path.exists(kerr):
+    os.remove(kerr)          # stale: the rewrite above heals what caused it
+msg = f"  key {key} -> {VAL}: bound in {bound} layout section(s)"
+if moved:
+    msg += ", moved out of the old layout:main-providers section"
+if kept:
+    msg += f", kept an existing binding of yours in {kept}"
+print(msg)
 EOF
 
 # --- 3. layout selection ------------------------------------------------------
@@ -265,4 +330,81 @@ else:
     except Exception as e:
         print(f"  ! could not switch off {cur}: {e} — switch by hand:")
         print("    herdr-app do layout.switch '{\"name\": \"%s\"}'" % NAME)
+EOF
+# --- 4. key check ---------------------------------------------------------------
+# The toggle key needs all of these to hold; each is checked and the failing
+# one is named: the binding sits in keys.json under a section for a layout
+# that carries the panel, keys.json parses (Herdr writes keys.error when it
+# does not), and the layout Herdr shows is one of those sections. Herdr
+# reloads keys.json live, so no restart is involved anywhere below.
+echo "key check:"
+python3 - "$CFG" <<'EOF'
+import glob, json, os, subprocess, sys
+cfg = sys.argv[1]
+KEY = "cmd-shift-b" if os.uname().sysname == "Darwin" else "alt-p"
+VAL = "layout.toggle:provider-menu-panel"
+
+def run(*a):
+    try:
+        r = subprocess.run(a, capture_output=True, text=True, timeout=8)
+        return r if r.returncode == 0 else None
+    except Exception:
+        return None
+
+shown = None
+st = run("herdr-app", "status")
+if st is not None:
+    try:
+        d = json.loads(st.stdout)
+        shown = d.get("layout")
+        for e in d.get("errors") or []:
+            print(f"  ! Herdr reports: {e}")
+    except Exception:
+        pass
+v = run("herdr-app", "--version")
+ver = v.stdout.strip().splitlines()[-1] if v else "herdr-app CLI not on PATH"
+print(f"  {ver}"
+      + (f", showing layout {shown!r}" if shown else " — not running, file checks only"))
+
+err = os.path.join(cfg, "keys.error")
+if os.path.exists(err):
+    print(f"  ! Herdr rejected keys.json: {open(err).read().strip()}")
+try:
+    keys = json.load(open(os.path.join(cfg, "keys.json")))
+    if not isinstance(keys, dict):
+        raise ValueError("not an object")
+except Exception as e:
+    keys = {}
+    print(f"  ! keys.json does not parse: {e}")
+
+def has_id(n, i):
+    if isinstance(n, dict):
+        if n.get("id") == i:
+            return True
+        return any(has_id(c, i) for c in n.get("children", []))
+    if isinstance(n, list):
+        return any(has_id(c, i) for c in n)
+    return False
+
+sections = []
+for p in sorted(glob.glob(os.path.join(cfg, "layouts", "*.json"))):
+    base = os.path.basename(p)[:-5]
+    if base in ("main", "terminals", "win98"):
+        continue
+    try:
+        doc = json.load(open(p))
+    except Exception:
+        continue
+    if has_id(doc, "provider-menu-panel") and (keys.get("layout:" + base) or {}).get(KEY) == VAL:
+        sections.append(base)
+if not sections:
+    print(f"  ! the {KEY} binding is missing from keys.json (run this script again)")
+elif shown is not None and shown not in sections:
+    print(f"  ! the binding covers {', '.join(sections)} but Herdr shows {shown!r} — switch with:")
+    print("    herdr-app do layout.switch '{\"name\": \"%s\"}'" % sections[0])
+else:
+    print(f"  {KEY} is bound in {', '.join(sections)}; all checks pass — it should toggle the panel now")
+    if os.uname().sysname == "Darwin":
+        print(f"  still nothing? a mac shortcut may grab {KEY} first (System Settings > Keyboard > Keyboard Shortcuts),")
+        print( "  or move the binding to another key in keys.json — Herdr reloads it live")
 EOF
