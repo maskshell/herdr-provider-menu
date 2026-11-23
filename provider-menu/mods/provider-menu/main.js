@@ -4,15 +4,12 @@
 import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import { theme, spaces, run, shared, setShared, window, checking, props, openOverlay, closeOverlay, knownAgents, layout } from "herdr";
-import { readProviders, launchArgv, handoffAvailable, machinePlatform, EXTRA, RC, HARNESS, cardNote } from "./providers.js";
+import { readProviders, launchArgv, handoffAvailable, machinePlatform, EXTRA, RC, SRC, MCP, MCPONLY, HARNESS, cardNote } from "./providers.js";
 
 /// shared() key for the last good read of one harness (instant open, re-check).
 const cacheKey = app => "provider-menu." + app;
 /// shared() key for the folded-away harness sections ({app: true}; persists).
 const FOLD = "provider-menu.fold";
-/// shared() key for the machine each harness list was last read from
-/// ({app: name | ""} — "" is this computer; the refresh button shows it).
-const SRC = "provider-menu.src";
 /// The last agents each machine reported — the same cache the agent-menu
 /// clone keeps ("new-menu.agents"); the panel reads icons/tints from it.
 const KNOWN = "new-menu.agents";
@@ -101,6 +98,12 @@ export default class ProviderMenu extends View {
       this.input.focus();
       cx.timer.after(600, () => this.input.focus());
       this.handle = cx.focus_handle();
+      return;
+    }
+    if (props()?.mode === "mcp") {
+      this.dialog = true;
+      this.handle = cx.focus_handle();
+      this.handle.focus();
       return;
     }
     // One stacked section per harness: cached rows render at once, the reads
@@ -193,7 +196,10 @@ export default class ProviderMenu extends View {
     cx.spawn(async cx => {
       const space = spaces().find(s => s.active);
       try {
-        const argv = await launchArgv(p, [], space?.machine ?? null, app);
+        // src = the machine the shown cards came from: the MCP set (when the
+        // per-machine switch carries it) must come from the same database.
+        const src = this.src[app] ?? space?.machine ?? "";
+        const argv = await launchArgv(p, [], space?.machine ?? null, app, src);
         run("tab.new", { name: HARNESS[app].title + " (" + p.name + ")", space: space?.id, argv });
       } catch (e) {
         this.launchNote = String(e?.message ?? e);
@@ -333,6 +339,69 @@ export default class ProviderMenu extends View {
           .when(!on, el => el.bg(t.dim))));
   }
 
+  /// Opt-in per-machine MCP carry (T11): a launch into ANOTHER machine also
+  /// takes the cc-switch MCP servers enabled here for that harness — Claude
+  /// and Codex each carry their own set (one shared pool, per-harness flags).
+  /// Same-machine launches never carry (the live config already has the
+  /// set). The row carries three controls, so — unlike rc — the row itself
+  /// is not clickable: the pill toggles, "only mine" narrows to the strict
+  /// form (that session uses just the carried set), "?" opens the long-form
+  /// help (no tooltips in the SDK; the dialog is the established surface).
+  mcpRow() {
+    const t = theme();
+    const machine = spaces().find(s => s.active)?.machine ?? "";
+    const on = Boolean((shared(MCP) ?? {})[machine]);
+    const only = Boolean((shared(MCPONLY) ?? {})[machine]);
+    return h_flex().id("mcp").h(26).px(6).gap(8).items_center().rounded(6)
+      .hover(s => s.bg(t.raised))
+      .child(div().text_size(10.5).text_color(on ? t.foreground : t.dim).child("mcp"))
+      .when(on, el => el.child(h_flex().id("mcp-only").h(20).px(3).gap(5).items_center().rounded(6)
+        .cursor_pointer().hover(s => s.bg(t.selected))
+        .on_click((_e, cx) => { const all = shared(MCPONLY) ?? {}; all[machine] = !all[machine]; setShared(MCPONLY, all); cx.notify(); })
+        .child(h_flex().id("mcp-only-box").size(13).flex_none().rounded(3).items_center().justify_center()
+          .when(only, s => s.bg(t.accent))
+          .when(!only, s => s.border_1().border_color(t.input))
+          .when(only, s => s.child(div().text_size(9.5).text_color(t.surface).child("✓"))))
+        .child(div().text_size(10.5).text_color(only ? t.foreground : t.dim).child("only mine"))))
+      .child(div().flex_1())
+      .child(h_flex().id("mcp-help").h(18).px(6).items_center().rounded(6).cursor_pointer()
+        .hover(s => s.bg(t.selected))
+        .on_click(() => openOverlay({ mod: "provider-menu", kind: "dialog", width: 520, height: 380, props: { mode: "mcp" } }))
+        .child(div().text_size(10).text_color(t.dim).child("?")))
+      .child(h_flex().id("mcp-track").w(26).h(15).rounded(7).items_center().px(1).cursor_pointer()
+        .when(on, el => el.bg(t.accent).justify_end())
+        .when(!on, el => el.border_1().border_color(t.input))
+        .on_click((_e, cx) => { const all = shared(MCP) ?? {}; all[machine] = !all[machine]; setShared(MCP, all); cx.notify(); })
+        .child(div().w(11).h(11).rounded(5)
+          .when(on, el => el.bg(t.surface))
+          .when(!on, el => el.bg(t.dim))));
+  }
+
+  /// The "?" help for the mcp row: what carries, what stays, what "only
+  /// mine" means, and where the tokens go — the same facts DESIGN.md §T11
+  /// records, in panel-sized sentences.
+  mcpDialog() {
+    const t = theme();
+    const p = props() ?? {};
+    const line = (text, pt) => div().pt(pt).text_size(11.5).text_color(t.dim).child(text);
+    return v_flex().id("provider-mcp").track_focus(this.handle)
+      .on_key_down((e, cx) => { if (e.key === "escape") { closeOverlay(p.overlay); cx.stop_propagation(); } })
+      .w_full().min_h(0).p(18).gap(2).bg(t.popover).text_color(t.foreground)
+      .child(h_flex().items_center()
+        .child(div().flex_1().text_size(15).font_semibold().child("MCP carry-over"))
+        .child(this.escChip(p)))
+      .child(div().pt(8).text_size(12.3)
+        .child("When on, a launch into another machine also carries the MCP servers cc-switch has enabled here for that agent. Claude and Codex keep separate sets."))
+      .child(line("Launches on this machine never carry: its own cc-switch has already written them into the live config.", 8))
+      .child(line("The target keeps its own MCP definitions; carried ones are added, and on the same name the carried definition wins for that session.", 8))
+      .child(line("Only mine: that session uses just the carried set — the target's own MCP servers stay off for it.", 8))
+      .child(line("MCP definitions can hold tokens in their env. They travel the same RAM-only handoff as credentials; where the target has no /dev/shm they ride the launch command itself, and the cross-machine dialog asks first.", 8))
+      .child(h_flex().pt(16).gap(8).justify_end()
+        .child(h_flex().id("pm-ok").h(30).px(12).items_center().rounded(8)
+          .border_1().border_color(t.solid).bg(t.solid).text_color(t.solid_foreground).cursor_pointer()
+          .on_click(() => closeOverlay(p.overlay)).child("OK")));
+  }
+
   argsDialog() {
     const t = theme();
     const p = props() ?? {};
@@ -378,7 +447,7 @@ export default class ProviderMenu extends View {
       cx.spawn(async cx => {
         const space = spaces().find(s => s.active);
         try {
-          const argv = await launchArgv(this.bProvider, [], space?.machine ?? null, this.bApp);
+          const argv = await launchArgv(this.bProvider, [], space?.machine ?? null, this.bApp, this.bSrc);
           closeOverlay(p.overlay);
           run("tab.new", { name: HARNESS[this.bApp].title + " (" + this.bProvider.name + ")", space: space?.id, argv });
         } catch (e) {
@@ -407,7 +476,7 @@ export default class ProviderMenu extends View {
       .child(div().pt(8).text_size(12.3)
         .child((this.bProvider?.name ?? "This provider") + " comes from " + name(this.bSrc) + "'s database. The launch runs on " + name(this.bDst) + "."))
       .child(div().pt(8).text_size(12.3)
-        .child("The credential travels in the launch command. Herdr's core on " + name(this.bDst) + " records that command in its state file terminals.json. The record stays after the terminal closes; nothing cleans it automatically. Live sessions also show the command in /proc."))
+        .child("The credential (and any carried MCP definitions) travels in the launch command. Herdr's core on " + name(this.bDst) + " records that command in its state file terminals.json. The record stays after the terminal closes; nothing cleans it automatically. Live sessions also show the command in /proc."))
       .child(div().pt(8).text_size(11.5).text_color(t.dim)
         .child("To keep a credential off a machine, launch from that machine's own database instead."))
       .when(this.bNote, el => el.child(div().pt(8).text_size(11.5).text_color(t.dim).child(this.bNote)))
@@ -470,7 +539,10 @@ export default class ProviderMenu extends View {
 
   render(cx) {
     if (this.isToggle) return this.toggleBar();
-    if (this.dialog) return props()?.mode === "windows" ? this.windowsDialog() : props()?.mode === "borrow" ? this.borrowDialog() : this.argsDialog();
+    if (this.dialog) return props()?.mode === "windows" ? this.windowsDialog()
+      : props()?.mode === "borrow" ? this.borrowDialog()
+      : props()?.mode === "mcp" ? this.mcpDialog()
+      : this.argsDialog();
     const t = theme();
     const unix = window()?.platform !== "windows";
     // Re-read when the panel comes back from hidden (the toggle reopened it):
@@ -498,6 +570,7 @@ export default class ProviderMenu extends View {
         .when(closable, el => el.child(this.closeChip(t, target))))
       .child(this.argsRow())
       .child(this.rcRow())
+      .child(this.mcpRow())
       .child(this.foldRow())
       .when(!unix, el => el.child(div().px(6).py(8).text_color(t.dim)
         .child("Windows lands in Phase 2 (test T3).")))

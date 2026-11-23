@@ -24,7 +24,7 @@ Two mods in this package, both clones of shipped mods:
 
 - `agent-menu` — a clone of the shipped `new-menu` (`place: "none"`), differing as described above. From `herdr`: `theme, spaces, panes, knownAgents, run, openOverlay, closeOverlay, props, window, keys, shared, setShared`; from gpui: `View, div, svg, image, h_flex, v_flex`. Calls `run("tab.new", { name, space, argv })`, `run("space.new")`, opens the worktree dialogs. Height is computed: `min(491, 167 + rows*31 + submenu*27)`.
 - `my-tabs` — a clone of the shipped `tabs` with one changed line: the + button runs `openOverlay({ mod: "agent-menu", kind: "popup", width: 250, height: 512 })` instead of opening the stock menu. Everything else in the tab bar is stock.
-- Both carry the same `providers.js`: reads the space machine's `~/.cc-switch/cc-switch.db` read-only via the `sqlite3` CLI, classifies each card per harness (`HARNESS = { claude, codex }`), and builds launch argv. Exports `readProviders, launchArgv, cardNote, handoffAvailable`. Extra args and rc-profile mode (set through the provider-menu panel package) are honored here too.
+- Both carry the same `providers.js`: reads the space machine's `~/.cc-switch/cc-switch.db` read-only via the `sqlite3` CLI, classifies each card per harness (`HARNESS = { claude, codex }`), and builds launch argv. Exports `readProviders, launchArgv, cardNote, handoffAvailable, readMcps`. Extra args and rc-profile mode (set through the provider-menu panel package) are honored here too. MCP carry-over does not apply here: this menu always reads the machine it launches on, so there is nothing to carry across.
 - Icons: `icons/shell.svg`, `mods/workspace-chrome/branch.svg`, agent icons from `knownAgents()`.
 
 ## Watch out

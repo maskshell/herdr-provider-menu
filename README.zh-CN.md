@@ -40,6 +40,7 @@ sh scripts/p1-install.sh    # 装入 mod、生成以你命名的 main 克隆、�
 - 头部的关闭 ✕ 与 tab 栏的 “Providers” 重开钮：面板可收起、可复原，状态重启后保留。键位同样可开合(`alt-p`；macOS 为 `cmd-shift-b`——那里的 alt 是 option 键，⌥P 会打出 π)。
 - 每机一个 `args` 行：持久附加参数，例如 `--allow-dangerously-skip-permissions`。本 mod 自身不添加任何参数。参数进入启动的唯一途径是这个被记录的行。
 - 每机一个 `rc profile` 行：经 shell profile 运行启动，shell 的 alias 与 function 因此生效。默认关闭。
+- 每机一个 `mcp` 行：跨机启动时把本机为该 agent 勾选的 cc-switch MCP 一并带去(Claude 与 Codex 各自的集合；`only mine` 让该会话只用携带集)。同机启动不带——本机的 cc-switch 已把它们写进 live 配置。
 
 面板记住上次刷新所用的机器。刷新按钮显示所示列表的来源机器，并按当前 space 的机器重读。
 
@@ -83,11 +84,12 @@ herdr-app do layout.switch '{"name":"main"}'
 
 ## 制约
 
-- Windows 暂不支持作为 GUI 机或启动目标：启动命令使用 `env`、`bash` 与 `/dev/shm`（Windows 配方是待做的 T3）；从 Windows space 启动会显示解释弹窗。Windows 机器可以作为数据库源——读取它的 cc-switch.db 只需要那台机器装有 sqlite3。
+- Windows 暂不支持作为 GUI 机或启动目标：启动命令使用 `env`、`bash` 与 `/dev/shm`（Windows 配方待做）；从 Windows space 启动会显示解释弹窗。Windows 机器可以作为数据库源——读取它的 cc-switch.db 只需要那台机器装有 sqlite3。
 - 某些供应商只能经 cc-switch 本身运行：官方 OAuth 账号，以及需要本地路由的格式。它们灰显并注明原因。本 mod 不启动它们。
 - 本 mod 绝不自行添加 `--dangerously-skip-permissions` 或任何其他参数。参数只能经用户记录的 `args` 行进入启动。
 - 凭据经内存交接送达 CLI（机器支持时）：一次 exec 把凭据写入 `/dev/shm` 下的 0600 文件，终端命令只读取该路径并随即删除文件——不落盘，也不进被记录的启动命令。无 `/dev/shm` 的机器（macOS）回落为凭据随启动命令本身传递：此时目标机上的 herdr core 会把启动命令（含凭据）记录进状态文件 `~/.local/state/herdr-core/<会话>/terminals.json`，且无自动清理；跨机借用的首次启动会按机器对弹窗确认。回落形态下，活会话期间命令也出现在 `/proc` 里。细节见 DESIGN.md §6。
 - 仅存在于 live 设置文件(`~/.claude/settings.json`)里的环境变量键会被逐次启动挡掉。`CLAUDE_CODE_*` 等调优键应配在各供应商上(cc-switch 里)，而不是只写在 live 文件里。
+- 携带的 MCP 定义 env 里可含 token。它们与凭据走同一内存交接；无 /dev/shm 的机器上随启动命令传递(跨机弹窗先确认)，且定义在启动进程存活期间停留在其命令行上。在目标机上携带集与该机自有定义合并——同名时携带的定义在该会话胜出。
 - 无头机上，数据库由用户自行解决。`scripts/seed-cc-switch-db.py` 是验证工具，不是建库方式。
 
 ## 延伸阅读

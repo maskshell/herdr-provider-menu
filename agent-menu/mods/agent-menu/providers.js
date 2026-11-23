@@ -36,6 +36,29 @@ export function splitArgs(text) {
 /// may export over what env -u cleaned.
 export const RC = "provider-menu.rcLaunch";
 
+/// shared() key for the machine each harness list was last read from
+/// ({app: name | ""} — "" is this computer). The panel writes it; launches
+/// read it to know where the shown cards (and the MCP set) came from.
+export const SRC = "provider-menu.src";
+
+/// shared() key for the per-machine "carry the MCP set on cross-machine
+/// launches" mode ("" = this machine). T11: a launch into ANOTHER machine
+/// also takes the cc-switch MCP servers enabled for that harness on the
+/// machine the cards came from. The mcp_servers table is one shared pool
+/// with per-harness enable flags (enabled_claude / enabled_codex …), so
+/// each harness carries its own subset. Same-machine launches never carry:
+/// cc-switch has already written that set into the target's live config.
+export const MCP = "provider-menu.mcp";
+
+/// shared() key for the per-machine strict form of the carry ("" = this
+/// machine): the session uses ONLY the carried set. Claude takes
+/// --strict-mcp-config; codex has no flag, an empty-table override
+/// (mcp_servers={}) clears the target's own first. Default off: carry is
+/// additive — the target keeps its own definitions, and on the same name
+/// the carried definition wins for that session (measured, 2026-11-23:
+/// --mcp-config > target's user scope > target's project scope).
+export const MCPONLY = "provider-menu.mcpOnly";
+
 /// Single-quote wrap with the '\'' escape — safe for arbitrary bytes.
 function shellQuote(word) {
   return "'" + String(word).replace(/'/g, "'\\''") + "'";
@@ -91,6 +114,22 @@ async function handoffFile(machine, secret) {
 function handoffScript(file, body) {
   return ["bash", "-c",
     's="$(cat ' + file + ' 2>/dev/null)"; [ -n "$s" ] || { echo \'provider credential file missing (session ended?) — relaunch from the menu\'; exit 1; }; rm -f ' + file + "; " + body];
+}
+
+/// The many-value form of the handoff (T11): the RAM file holds shell
+/// assignments NAME='<quoted>', the script sources it, deletes it, guards
+/// the required var, then runs body. The body sees the values through
+/// $NAME references — the RECORDED command line (terminals.json) keeps the
+/// references, never the values, which is the point: MCP server configs
+/// carry tokens in their env. Lives in RAM like every handoff file.
+async function handoffSourced(machine, assignments, required, body) {
+  const content = assignments.map(([n, v]) => n + "=" + shellQuote(String(v))).join("\n");
+  const file = await handoffFile(machine, content);
+  if (!file) return null;
+  const die = "{ echo 'provider credential file missing (session ended?) — relaunch from the menu'; exit 1; }";
+  return ["bash", "-c",
+    '[ -f ' + file + ' ] || ' + die + '; . ' + file + '; rm -f ' + file
+    + '; [ -n "$' + required + '" ] || ' + die + "; " + body];
 }
 
 function parse(text, fallback) {
@@ -191,13 +230,17 @@ function launchableCard(settings) {
 /// rc = {login} switches to the profile-following form: a shell-quoted
 /// command string under bash -[l]ic, so the person's aliases AND functions
 /// resolve claude (word vectors carry functions only). env -u still wraps it.
-export function claudeArgv(settings, extra = [], rc = null) {
+/// mcp = {text, only} in the no-handoff fallback: the JSON rides the argv
+/// itself (tokens included — the documented fallback posture, same class
+/// as the credential's inline form; the cross-machine dialog asks first).
+export function claudeArgv(settings, extra = [], rc = null, mcp = null) {
   const unset = UNSET.flatMap(u => ["-u", u]);
+  const mcpWords = mcp ? ["--mcp-config", mcp.text, ...(mcp.only ? ["--strict-mcp-config"] : [])] : [];
   if (rc) {
-    const line = ["claude", "--settings", JSON.stringify(settings), ...extra].map(shellQuote).join(" ");
+    const line = ["claude", "--settings", JSON.stringify(settings), ...mcpWords, ...extra].map(shellQuote).join(" ");
     return ["env", ...unset, "bash", rc.login ? "-lic" : "-ic", line];
   }
-  return ["env", ...unset, "claude", "--settings", JSON.stringify(settings), ...extra];
+  return ["env", ...unset, "claude", "--settings", JSON.stringify(settings), ...mcpWords, ...extra];
 }
 
 /// Top-level keys blocked with same-shape empties: T8-verified safe as empty
@@ -273,14 +316,31 @@ const claudeHarness = {
   /// Reads the machine's live ~/.claude/settings.json first (unreadable →
   /// no blocks; upstream warns and proceeds the same way). The settings JSON
   /// goes through the RAM handoff when the machine has /dev/shm; the inline
-  /// argv remains the fallback.
-  async launch(card, machine, extra, rc) {
+  /// argv remains the fallback. mcp = {servers, only} (T11): the MCP JSON
+  /// rides the same handoff as a second assignment ($PMM → --mcp-config,
+  /// --strict-mcp-config when only), so its tokens stay off the recorded
+  /// command line too.
+  async launch(card, machine, extra, rc, mcp) {
     const liveText = await readText(machine, ".claude/settings.json", home() + "/.claude/settings.json");
     const settings = launchSettings(card, liveText);
+    const tail = extra.map(shellQuote).join(" ");
+    const unset = UNSET.map(u => "-u " + shellQuote(u)).join(" ");
+    const mcpLine = mcp
+      ? ' --mcp-config "$PMM"' + (mcp.only ? " --strict-mcp-config" : "")
+      : "";
+    if (mcp) {
+      const argv = await handoffSourced(machine, [
+        ["PMS", JSON.stringify(settings)],
+        ["PMM", JSON.stringify({ mcpServers: mcp.servers })],
+      ], "PMS", rc
+        ? 'export PMS PMM; exec env ' + unset + " bash " + (rc.login ? "-lic" : "-ic") + " "
+          + shellQuote('claude --settings "$PMS"' + mcpLine + (tail ? " " + tail : ""))
+        : 'exec env ' + unset + ' claude --settings "$PMS"' + mcpLine + (tail ? " " + tail : ""));
+      if (argv) return argv;
+      return claudeArgv(settings, extra, rc, { text: JSON.stringify({ mcpServers: mcp.servers }), only: mcp.only });
+    }
     const file = await handoffFile(machine, JSON.stringify(settings));
     if (file) {
-      const tail = extra.map(shellQuote).join(" ");
-      const unset = UNSET.map(u => "-u " + shellQuote(u)).join(" ");
       // rc mode exports the JSON for the inner profile shell ($PMS); the
       // plain mode uses "$s" directly — bash never re-evaluates var values.
       return handoffScript(file, rc
@@ -413,10 +473,13 @@ function classifyCodex(settings, meta, category) {
 /// the command line — env_key beats a leftover bearer, upstream §codex_terminal);
 /// CODEX_HOME is pinned so a shell-exported one cannot redirect the process.
 /// rc = {login} switches to the profile-following bash -[l]ic form, same as claude.
-export function codexArgv(card, liveText, liveLogin, extra = [], rc = null, homeDir = null) {
+/// mcp = {overrides} in the no-handoff fallback: the -c strings ride the
+/// argv (tokens included — the documented fallback posture).
+export function codexArgv(card, liveText, liveLogin, extra = [], rc = null, homeDir = null, mcp = null) {
   const env = [CODEX_KEY_ENV + "=" + (card.key || "")];
   if (homeDir) env.push("CODEX_HOME=" + homeDir.replace(/\/+$/, "") + "/.codex");
-  const words = ["codex", "--no-daemon", ...codexOverrides(card, liveText, liveLogin), ...extra];
+  const mcpWords = mcp ? mcp.overrides.flatMap(o => ["-c", o]) : [];
+  const words = ["codex", "--no-daemon", ...codexOverrides(card, liveText, liveLogin), ...mcpWords, ...extra];
   if (rc) return ["env", ...env, "bash", rc.login ? "-lic" : "-ic", words.map(shellQuote).join(" ")];
   return ["env", ...env, ...words];
 }
@@ -505,15 +568,35 @@ const codexHarness = {
   /// Reads the machine's live ~/.codex/config.toml (unreadable → no
   /// neutralization) and auth.json (login flag), pins CODEX_HOME. The key
   /// goes through the RAM handoff when the machine has /dev/shm; the inline
-  /// env word remains the fallback.
-  async launch(card, machine, extra, rc) {
+  /// env word remains the fallback. mcp = {servers, only} (T11): each
+  /// carried server becomes a -c mcp_servers.<name>={…} override; with the
+  /// handoff the strings travel as sourced assignments ($PMMn → -c
+  /// "$PMMn"), so their env tokens stay off the recorded command line.
+  async launch(card, machine, extra, rc, mcp) {
     const liveText = await readText(machine, ".codex/config.toml", home() + "/.codex/config.toml");
     const homeDir = await machineHome(machine);
     const login = await codexLiveLogin(machine);
+    const homeEnv = "export CODEX_HOME=" + shellQuote(homeDir.replace(/\/+$/, "") + "/.codex") + "; ";
+    if (mcp) {
+      const overrides = mcpOverrides(mcp);
+      const names = overrides.map((_, i) => "PMM" + i);
+      const mcpWords = overrides.map((_, i) => ' -c "$PMM' + i + '"').join("");
+      const argv = await handoffSourced(machine,
+        [[CODEX_KEY_ENV, String(card.key ?? "")], ...overrides.map((o, i) => ["PMM" + i, o])],
+        CODEX_KEY_ENV,
+        "export " + [CODEX_KEY_ENV, ...names].join(" ") + "; " + homeEnv + (rc
+          ? 'exec bash ' + (rc.login ? "-lic" : "-ic") + " "
+            + shellQuote(["codex", "--no-daemon", ...codexOverrides(card, liveText, login)].map(shellQuote).join(" ") + mcpWords
+              + (extra.length ? " " + extra.map(shellQuote).join(" ") : ""))
+          : "exec codex --no-daemon " + codexOverrides(card, liveText, login).map(shellQuote).join(" ") + mcpWords
+            + (extra.length ? " " + extra.map(shellQuote).join(" ") : "")));
+      if (argv) return argv;
+      return codexArgv(card, liveText, login, extra, rc, homeDir, { overrides });
+    }
     const file = await handoffFile(machine, String(card.key ?? ""));
     if (file) {
       const quoted = ["codex", "--no-daemon", ...codexOverrides(card, liveText, login), ...extra].map(shellQuote).join(" ");
-      const head = "export " + CODEX_KEY_ENV + '="$s"; export CODEX_HOME=' + shellQuote(homeDir.replace(/\/+$/, "") + "/.codex") + "; ";
+      const head = "export " + CODEX_KEY_ENV + '="$s"; ' + homeEnv;
       return handoffScript(file, rc
         ? head + "exec bash " + (rc.login ? "-lic" : "-ic") + " " + shellQuote(quoted)
         : head + "exec " + quoted);
@@ -521,6 +604,80 @@ const codexHarness = {
     return codexArgv(card, liveText, login, extra, rc, homeDir);
   },
 };
+
+// ---------------------------------------------------------------------------
+// MCP carry (T11). cc-switch keeps one shared mcp_servers pool with
+// per-harness enable flags; the carry projects the same subset cc-switch
+// itself writes into the source machine's live config. Claude takes the
+// set as a --mcp-config JSON file ({"mcpServers": {…}}, merge semantics:
+// the target keeps its own, same name → carried wins). Codex has no flag:
+// each server becomes a -c mcp_servers.<name>={<inline table>} override,
+// layered on the target's config.toml per whole-server key.
+
+/// The MCP servers enabled for one harness on one machine, {name: config},
+/// name order. Empty when the table is missing (a cc-switch old enough not
+/// to manage MCPs projects to exactly nothing).
+export async function readMcps(machine, app = "claude") {
+  const col = app === "codex" ? "enabled_codex" : "enabled_claude";
+  let rows = [];
+  try {
+    rows = await query(machine,
+      "SELECT name, server_config FROM mcp_servers WHERE " + col + "=1 ORDER BY name ASC");
+  } catch { return {}; }
+  const out = {};
+  for (const r of rows) {
+    const cfg = parse(r.server_config ?? "{}", null);
+    if (cfg && typeof cfg === "object" && !Array.isArray(cfg)) out[String(r.name)] = cfg;
+  }
+  return out;
+}
+
+/// One JSON value as a TOML value: JSON strings are TOML basic strings
+/// (same escapes), arrays/objects render inline. null values drop their
+/// key — a TOML value cannot be null.
+function tomlInline(v) {
+  if (v == null || typeof v === "function") return null;
+  if (typeof v === "string") return JSON.stringify(v);
+  if (typeof v === "number" || typeof v === "boolean") return String(v);
+  if (Array.isArray(v)) {
+    const items = v.map(tomlInline).filter(x => x !== null);
+    return items.length === v.length ? "[" + items.join(",") + "]" : null;
+  }
+  const entries = Object.entries(v)
+    .map(([k, x]) => [k, tomlInline(x)]).filter(([, x]) => x !== null);
+  return "{" + entries.map(([k, x]) => tomlKey(k) + "=" + x).join(",") + "}";
+}
+
+/// The -c override strings for one carried set: mcp_servers.<name>={…} per
+/// server; strict prepends the empty-table override that clears whatever
+/// the target's own config.toml carries under mcp_servers.
+function mcpOverrides(mcp) {
+  const out = [];
+  if (mcp.only) out.push("mcp_servers={}");
+  for (const [name, cfg] of Object.entries(mcp.servers)) {
+    const t = tomlInline(cfg);
+    if (t) out.push("mcp_servers." + tomlKey(name) + "=" + t);
+  }
+  return out;
+}
+
+/// The carry context for one launch, or null when nothing carries: the
+/// person's per-TARGET-machine switch gates it, and the set comes from the
+/// machine the launched CARDS were read from (src) — a launch never
+/// carries a set from a database its cards did not come from, and a
+/// same-machine launch never carries at all (the live config already has
+/// the set; a carried copy would only shadow it, same name, same content).
+async function mcpContext(target, src, app) {
+  const dst = target ?? "";
+  const from = src ?? dst;
+  if (from === dst) return null;
+  if (!(shared(MCP) ?? {})[dst]) return null;
+  try {
+    const servers = await readMcps(from === "" ? null : from, app);
+    if (Object.keys(servers).length === 0) return null;
+    return { servers, only: Boolean((shared(MCPONLY) ?? {})[dst]) };
+  } catch { return null; }
+}
 
 // ---------------------------------------------------------------------------
 // Registry + dispatch.
@@ -600,11 +757,16 @@ export async function readProviders(machine, app = "claude") {
 
 /// The launch argv for one provider on one machine: the harness strategy
 /// builds it; extras (caller + the person's recorded per-machine ones) and
-/// the rc mode resolve here, shared. Dynamic env conventions live in the rc
-/// mode (RC key): the profile is the general mechanism, the mod hardcodes none.
-export async function launchArgv(provider, extra = [], machine = null, app = "claude") {
+/// the rc mode resolve here, shared. src names the machine the CARDS were
+/// read from (the panel's refresh source): when it differs from the launch
+/// target and the person's per-target mcp switch is on, the source's MCP
+/// set for this harness carries along (mcpContext). Dynamic env
+/// conventions live in the rc mode (RC key): the profile is the general
+/// mechanism, the mod hardcodes none.
+export async function launchArgv(provider, extra = [], machine = null, app = "claude", src) {
   if (await machinePlatform(machine) === "windows")
     throw new Error("this machine runs Windows — provider launches need the Windows recipes (not built yet). Plain agent rows still work.");
   const harness = HARNESS[app] ?? claudeHarness;
-  return harness.launch(provider, machine, extraArgs(machine, extra), await rcMode(machine));
+  return harness.launch(provider, machine, extraArgs(machine, extra), await rcMode(machine),
+    await mcpContext(machine, src, app));
 }

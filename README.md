@@ -40,6 +40,7 @@ The panel docks into personal layouts at 280px and gives:
 - A close ✕ in the header and a "Providers" pill in the tab bar: the panel hides and comes back, and the state survives restarts. A key does the same (`alt-p`; `cmd-shift-b` on macOS — `alt` is the option key there and ⌥P types π).
 - An `args` row per machine: persistent extra parameters, for example `--allow-dangerously-skip-permissions`. The mod itself adds no parameter. The recorded row is the only way one enters a launch.
 - An `rc profile` row per machine: run launches through the shell profile, so shell aliases and functions apply. Off by default.
+- An `mcp` row per machine: cross-machine launches also carry the MCP servers cc-switch has enabled here for that agent — Claude and Codex keep their own sets, and `only mine` makes the session use just the carried set. Same-machine launches never carry; the machine's own cc-switch has already written its set into the live config.
 
 The panel keeps the machine it last refreshed from. The refresh button shows the machine the shown lists came from and re-reads the active space's machine.
 
@@ -83,11 +84,12 @@ These commands return to the shipped layout. Delete the personal layout file und
 
 ## Limits
 
-- Windows is not supported as the GUI machine or as a launch target yet: the launch commands use `env`, `bash`, and `/dev/shm` (Windows recipes are the pending T3); launching from a Windows space shows an explanation dialog. A Windows machine works as a database source — reading its cc-switch.db only needs sqlite3 there.
+- Windows is not supported as the GUI machine or as a launch target yet: the launch commands use `env`, `bash`, and `/dev/shm` (Windows recipes are pending); launching from a Windows space shows an explanation dialog. A Windows machine works as a database source — reading its cc-switch.db only needs sqlite3 there.
 - Some providers work only through cc-switch itself: official OAuth accounts, and formats that need the local router. They appear grey, with the reason. The mod never launches them.
 - The mod never adds `--dangerously-skip-permissions` or any other flag by itself. A flag enters a launch only through the recorded `args` row.
 - Credentials reach the CLI through a RAM-only handoff where the machine allows it: an exec plants the secret in a 0600 file under `/dev/shm`, the terminal command only reads that path and deletes the file at once, and nothing lands on disk or in the recorded command. Machines without `/dev/shm` (macOS) fall back to the credential riding in the launch command itself. There, herdr's core records the command — including the credential — in its state file `~/.local/state/herdr-core/<session>/terminals.json`, with no automatic cleanup, and a first cross-machine launch asks for confirmation per machine pair. Live sessions show the fallback command in `/proc`. DESIGN.md §6 has the details.
 - Environment keys that exist only in the live settings file (`~/.claude/settings.json`) are blocked on each launch. Put tuning keys such as `CLAUDE_CODE_*` on each provider in cc-switch, not only in the live file.
+- Carried MCP definitions can hold tokens in their env. They travel the same RAM-only handoff as credentials; on a machine without /dev/shm they ride the launch command (the cross-machine dialog asks first), and the definitions sit on the launched process's command line for as long as it lives. On the target the carried set merges with the machine's own definitions — on the same name, the carried one wins for that session.
 - On a headless machine the database is the user's job. `scripts/seed-cc-switch-db.py` is a verification tool, not a provisioning path.
 
 ## Further reading
