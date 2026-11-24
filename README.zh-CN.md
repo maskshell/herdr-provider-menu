@@ -2,7 +2,7 @@
 
 [English](README.md) | **简体中文**
 
-在 [Herdr](https://github.com/herdrdev/herdr-app) 里以 cc-switch 管理的供应商身份启动 Claude Code 与 Codex。每个终端使用一个供应商。并行终端互不影响。全局配置保持不变。一个终端用 DeepSeek，旁边的终端用 Kimi，都可以。
+在 [Herdr](https://github.com/herdrdev/herdr-app) 里以 [cc-switch](https://github.com/farion1231/cc-switch) 管理的供应商身份启动 Claude Code 与 Codex。每个终端使用一个供应商。并行终端互不影响。全局配置保持不变。一个终端用 DeepSeek，旁边的终端用 Kimi，都可以。
 
 Claude Code 与 Codex 已在 sandbox 与真机(macOS、Linux)验证，含跨机启动。Windows 暂不支持。[DESIGN.md](DESIGN.md) 说明工作原理、设计决策与安全姿态；[REVIEW.md](REVIEW.md) 记录验证过程。
 
