@@ -573,7 +573,7 @@ export default class ProviderMenu extends View {
   repickX() {
     const t = theme();
     return h_flex().id("move-repick").size(16).flex_none().items_center().justify_center()
-      .rounded(5).text_size(10).text_color(t.dim).cursor_pointer().hover(s => s.bg(t.selected))
+      .rounded(5).text_size(11).text_color(t.dim).cursor_pointer().hover(s => s.bg(t.selected))
       .on_click((_e, cx) => { this.move = { ...this.move, target: null, armed: false, note: "" }; setShared(MOVE, this.move); cx.notify(); })
       .child("✕");
   }
@@ -591,8 +591,8 @@ export default class ProviderMenu extends View {
         .child(h_flex().size(11).items_center().justify_center()
           .rounded_full().border_1().border_color(sel ? t.accent : t.input)
           .when(sel, s => s.child(div().size(5).rounded_full().bg(t.accent)))))
-      .child(div().text_size(10.5).text_color(sel ? t.foreground : t.dim)
-        .child(dir.length > 40 ? "…" + dir.slice(-39) : dir));
+      .child(div().flex_1().min_w(0).whitespace_nowrap().text_size(12.5).text_color(sel ? t.foreground : t.dim)
+        .child(dir.length > 32 ? "…" + dir.slice(-31) : dir));
   }
 
   /// Pick one shell's cwd as the target: the gate runs now (empty, lineage
@@ -626,18 +626,25 @@ export default class ProviderMenu extends View {
     if (!m) return null;
     const cur = spaces().find(s => s.active)?.machine ?? "";
     const srcName = m.src === "" ? "this machine" : m.src;
-    const line = (id, text, pt) => div().id(id).pt(pt).text_size(10.5).text_color(t.dim).child(text);
-    // A group label: smaller than its rows, sitting at the margin while
+    const line = (id, text, pt) => div().id(id).pt(pt).text_size(12.5).text_color(t.dim).child(text);
+    // A group label: one step under its rows, sitting at the margin while
     // the rows indent under it — the card's hierarchy cue.
-    const label = (id, text, pt = 0) => div().id(id).pt(pt).text_size(9.5).text_color(t.dim).child(text);
+    const label = (id, text, pt = 0) => div().id(id).pt(pt).text_size(11).text_color(t.dim).child(text);
     return v_flex().id("move-card").flex_none().mt(2).px(6).py(6).gap(2).rounded(6).bg(t.raised)
       .child(h_flex().items_center().gap(6)
-        .child(div().text_size(10.5).font_semibold().child("copy " + HARNESS[m.app].title.toLowerCase() + " session"))
+        .child(div().text_size(12.5).font_semibold().child("Copy " + HARNESS[m.app].title + " session"))
         .child(div().flex_1())
         .child(h_flex().id("move-cancel").size(16).items_center().justify_center().rounded(5)
-          .text_size(10).text_color(t.dim).cursor_pointer().hover(s => s.bg(t.selected))
+          .text_size(11).text_color(t.dim).cursor_pointer().hover(s => s.bg(t.selected))
           .on_click(() => this.clearMove()).child("✕")))
-      .child(line("move-src", "from " + srcName + " · " + m.root, 2))
+      // The staged path is the card's subject — foreground, not dim. The
+      // label is its own flex item, so a long path wraps inside the path
+      // div and the continuation lines indent under the path's start
+      // (hanging indent past the label) instead of truncating.
+      .child(h_flex().id("move-src").pt(2).items_start().gap(4)
+        .child(div().flex_none().text_size(12.5).text_color(t.dim).child("from " + srcName + " ·"))
+        .child(div().flex_1().min_w(0).text_size(12.5).text_color(t.foreground)
+          .child(m.root)))
       .when(!m.target && cur === m.src, el => el.child(line("move-hint-src",
         "Switch to a space on another machine, open a shell there, cd to an empty directory", 2)))
       .when(!m.target && cur !== m.src, el => {
@@ -659,39 +666,53 @@ export default class ProviderMenu extends View {
           .when(!m.shells, e => e.child(h_flex().id("move-list").pt(2).px(7).h(18).items_center().rounded(6)
             .border_1().border_color(t.input).cursor_pointer().hover(s => s.bg(t.selected))
             .on_click((_e, cx) => this.shellTargets(cx))
-            .child(div().text_size(10).child("List shells on " + (cur === "" ? "this machine" : cur)))))
+            .child(div().text_size(11).child("List shells on " + (cur === "" ? "this machine" : cur)))))
           .when(m.shells, e => e.children([
             h_flex().pt(4).items_center().gap(6)
               .child(label("move-shells-label", "shells on " + (cur === "" ? "this machine" : cur)))
               .child(div().flex_1())
-              .child(h_flex().id("move-relist").h(16).px(7).items_center().rounded(6)
+              .child(h_flex().id("move-relist").h(18).px(7).items_center().rounded(6)
                 .border_1().border_color(t.input).bg(t.raised).cursor_pointer()
                 .hover(s => s.bg(t.selected))
                 .on_click((_e, cx) => this.shellTargets(cx))
-                .child(div().text_size(9.5).child("Refresh"))),
+                .child(div().text_size(11).child("Refresh"))),
             ...m.shells.filter(d => !nowSet.has(d)).slice(0, 4).map((dir, i) => this.shellRow("move-shell-" + i, dir)),
           ]));
       })
       .when(m.note, el => el.child(line("move-note", m.note, 2)))
-      .when(m.target && !m.target.gate.ok, el => el.child(h_flex().pt(2).pl(8).pr(3).h(20).items_center().gap(5)
+      // The refused reason and the promoted line can outrun the 280px panel:
+      // min_w(0) lets flex_1 actually bound the text (a flex item's
+      // min-content width otherwise stretches it past the edge), the row
+      // grows with the wrap instead of a fixed h(20) clipping it.
+      .when(m.target && !m.target.gate.ok, el => el.child(h_flex().pt(2).pl(8).pr(3).min_h(20).items_start().gap(5)
         .child(this.repickX())
-        .child(div().flex_1().text_size(10.5).text_color(t.blocked)
-          .child((m.target.dir.length > 14 ? "…" + m.target.dir.slice(-13) : m.target.dir)
-            + " — " + m.target.gate.reason + ". Pick another."))))
+        .child(div().flex_1().min_w(0).text_size(12.5).text_color(t.blocked)
+          .child(m.target.dir + " — " + m.target.gate.reason + ". Pick another."))))
       .when(m.target && m.target.gate.ok, el => el
-        .child(h_flex().pt(2).pl(8).pr(3).h(20).items_center().gap(5)
+        // Mirrors the from-line: dim "to <machine> ·" label, the target
+        // directory foreground (it is where everything lands) and wrapping
+        // with continuation lines indented under the path's start. The
+        // (first copy | update) tag rides the path — one string is what
+        // wraps as a unit here.
+        .child(h_flex().pt(2).pl(8).pr(3).min_h(20).items_start().gap(5)
           .child(this.repickX())
-          .child(div().text_size(10.5).text_color(t.dim)
-            .child("to " + (m.target.machine === "" ? "this machine" : m.target.machine) + " · " + m.target.dir + " (" + (m.target.gate.kind === "fresh" ? "first copy" : "update") + ")")))
-        .child(h_flex().id("move-arm").pt(3).px(3).h(20).items_center().gap(5).rounded(6)
+          .child(div().flex_none().text_size(12.5).text_color(t.dim)
+            .child("to " + (m.target.machine === "" ? "this machine" : m.target.machine) + " ·"))
+          .child(div().flex_1().min_w(0).text_size(12.5).text_color(t.foreground)
+            .child(m.target.dir + " (" + (m.target.gate.kind === "fresh" ? "first copy" : "update") + ")")))
+        // The arm checkbox joins the pick column: radio dot → ✕ → box all
+        // sit in the same 16px lead, so the promoted line and this label
+        // start at the same x and the hover block matches a candidate row.
+        .child(h_flex().id("move-arm").pt(3).pl(8).pr(3).min_h(20).items_start().gap(5).rounded(6)
           .cursor_pointer().hover(s => s.bg(t.selected))
           .on_click((_e, cx) => { this.move = { ...this.move, armed: !this.move.armed }; setShared(MOVE, this.move); cx.notify(); })
-          .child(h_flex().size(13).flex_none().rounded(3).items_center().justify_center()
-            .when(m.armed, s => s.bg(t.accent))
-            .when(!m.armed, s => s.border_1().border_color(t.input))
-            .when(m.armed, s => s.child(div().text_size(9.5).text_color(t.surface).child("✓"))))
-          .child(div().text_size(10.5).text_color(m.armed ? t.foreground : t.dim).child("copy the session and workspace above")))
-        .when(m.armed, e2 => e2.child(line("move-pick", "pick a " + HARNESS[m.app].title + " provider above to copy and resume", 2))));
+          .child(h_flex().size(16).flex_none().items_start().justify_center()
+            .child(h_flex().size(13).mt(2).rounded(3).items_center().justify_center()
+              .when(m.armed, s => s.bg(t.accent))
+              .when(!m.armed, s => s.border_1().border_color(t.input))
+              .when(m.armed, s => s.child(div().text_size(9.5).text_color(t.surface).child("✓")))))
+          .child(div().flex_1().min_w(0).text_size(12.5).text_color(m.armed ? t.foreground : t.dim).child("Copy the session and workspace above")))
+        .when(m.armed, e2 => e2.child(line("move-pick", "Pick a " + HARNESS[m.app].title + " provider above to copy and resume", 2))));
   }
 
   /// The move confirmation + transfer progress (T12). Runs the whole move:
