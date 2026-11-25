@@ -583,10 +583,14 @@ export default class ProviderMenu extends View {
   /// refused pick too, which otherwise dead-ends the card.
   repickX() {
     const t = theme();
-    return h_flex().id("move-repick").size(16).flex_none().items_center().justify_center()
-      .rounded(5).text_size(11).text_color(t.dim).cursor_pointer().hover(s => s.bg(t.selected))
+    // The boxed ✕: the same 13px box shape as the arm checkbox so the lead
+    // column's controls read as one family, red because it drops the picked
+    // target. The 16px cell stays the hit area.
+    return h_flex().id("move-repick").size(16).flex_none().items_start().justify_center()
+      .rounded(5).cursor_pointer().hover(s => s.bg(t.selected))
       .on_click((_e, cx) => { this.move = { ...this.move, target: null, armed: false, note: "" }; setShared(MOVE, this.move); cx.notify(); })
-      .child("✕");
+      .child(h_flex().size(13).mt(2).rounded(3).items_center().justify_center()
+        .border_1().border_color(t.blocked).text_size(9.5).text_color(t.blocked).child("✕"));
   }
 
   /// One candidate row: a radio dot (the candidates — current tab and
@@ -653,13 +657,19 @@ export default class ProviderMenu extends View {
           .text_size(11).text_color(t.dim).cursor_pointer().hover(s => s.bg(t.selected))
           .on_click(() => this.clearMove()).child("✕")))
       // The staged path is the card's subject — foreground, not dim. The
-      // label is its own flex item, so a long path wraps inside the path
-      // div and the continuation lines indent under the path's start
-      // (hanging indent past the label) instead of truncating.
-      .child(h_flex().id("move-src").pt(2).items_start().gap(4)
-        .child(div().flex_none().text_size(12.5).text_color(t.dim).child("from " + srcName + " ·"))
-        .child(div().flex_1().min_w(0).text_size(12.5).text_color(t.foreground)
-          .child(m.root)))
+      // source line carries a selected radio (its own one-item group,
+      // locked: the source is fixed until the card is cleared — decorative,
+      // it says "chosen") in the same lead column as the pick rows' radios,
+      // and the path sits on its own line indented under the label,
+      // wrapping at the panel's edge with every line at that indent.
+      .child(h_flex().id("move-src").pt(2).pl(8).pr(3).min_h(20).items_start().gap(5)
+        .child(h_flex().size(16).flex_none().items_start().justify_center()
+          .child(h_flex().size(11).mt(2).items_center().justify_center()
+            .rounded_full().border_1().border_color("#15803d")
+            .child(div().size(5).rounded_full().bg("#15803d"))))
+        .child(div().flex_1().min_w(0).text_size(12.5).text_color(t.dim).child("from " + srcName + ":")))
+      .child(div().id("move-src-path").pl(29).pr(3).text_size(12.5).text_color(t.foreground)
+        .child(m.root))
       .when(!m.target && cur === m.src, el => el.child(line("move-hint-src",
         "Switch to a space on another machine, open a shell there, cd to an empty directory", 2)))
       .when(!m.target && cur !== m.src, el => {
@@ -704,17 +714,17 @@ export default class ProviderMenu extends View {
         .child(div().flex_1().min_w(0).text_size(12.5).text_color(t.blocked)
           .child(m.target.dir + " — " + m.target.gate.reason + ". Pick another."))))
       .when(m.target && m.target.gate.ok, el => el
-        // Mirrors the from-line: dim "to <machine> ·" label, the target
-        // directory foreground (it is where everything lands) and wrapping
-        // with continuation lines indented under the path's start. The
-        // (first copy | update) tag rides the path — one string is what
-        // wraps as a unit here.
+        // Mirrors the from-line one-for-one: label line with the boxed ✕
+        // lead, then the target directory on its own line indented under
+        // the label (it is where everything lands). The (first copy |
+        // update) tag rides the path string — one string is what wraps
+        // as a unit here.
         .child(h_flex().pt(2).pl(8).pr(3).min_h(20).items_start().gap(5)
           .child(this.repickX())
-          .child(div().flex_none().text_size(12.5).text_color(t.dim)
-            .child("to " + nm(m.target.machine === "" ? "this machine" : m.target.machine) + " ·"))
-          .child(div().flex_1().min_w(0).text_size(12.5).text_color(t.foreground)
-            .child(m.target.dir + " (" + (m.target.gate.kind === "fresh" ? "first copy" : "update") + ")")))
+          .child(div().flex_1().min_w(0).text_size(12.5).text_color(t.dim)
+            .child("to " + nm(m.target.machine === "" ? "this machine" : m.target.machine) + ":")))
+        .child(div().pl(29).pr(3).min_w(0).text_size(12.5).text_color(t.foreground)
+          .child(m.target.dir + " (" + (m.target.gate.kind === "fresh" ? "first copy" : "update") + ")"))
         // The arm checkbox joins the pick column: radio dot → ✕ → box all
         // sit in the same 16px lead, so the promoted line and this label
         // start at the same x and the hover block matches a candidate row.
@@ -727,7 +737,13 @@ export default class ProviderMenu extends View {
               .when(!m.armed, s => s.border_1().border_color(t.input))
               .when(m.armed, s => s.child(div().text_size(9.5).text_color(t.surface).child("✓")))))
           .child(div().flex_1().min_w(0).text_size(12.5).text_color(m.armed ? t.foreground : t.dim).child("Copy the session and workspace above")))
-        .when(m.armed, e2 => e2.child(line("move-pick", "Pick a " + HARNESS[m.app].title + " provider above to copy and resume", 2))));
+        // A hairline separates the guidance zone from the picks above it;
+        // the line itself reads as guidance: pale gold, one step quieter
+        // than the rows but clearly not an error.
+        .when(m.armed, e2 => e2
+          .child(div().id("move-pick-rule").mt(5).h(1).bg(t.input))
+          .child(div().id("move-pick").pt(4).text_size(12.5)
+            .text_color("#a16207").child("Pick a " + HARNESS[m.app].title + " provider above to copy and resume"))));
   }
 
   /// The move confirmation + transfer progress (T12). Runs the whole move:
@@ -805,8 +821,14 @@ export default class ProviderMenu extends View {
       .when(!this.mBusy && this.mInput, el => el.child(div().pt(10)
         .child(Input.new(this.mInput).h(32).px(10).rounded(9).border_1().border_color(t.input).bg(t.background).text_size(12))))
       .when(!this.mBusy && this.mInput, el => el.child(line("First message to the resumed session — its history mentions the old machine, a note helps.", 4)))
-      .when(this.mStat, el => el.child(div().pt(10).text_size(11.5)
-        .text_color(this.mErr ? t.blocked : t.dim).child(this.mStat)))
+      // Progress and errors share a field-style box (the input row's own
+      // look): while busy the line carries the accent color — activity,
+      // not prose; a failure turns both the border and the text blocked.
+      .when(this.mStat, el => el.child(div().pt(10).px(10).py(7).rounded(9)
+        .border_1().border_color(this.mErr ? t.blocked : t.input).bg(t.background)
+        .child(div().text_size(11.5)
+          .text_color(this.mErr ? t.blocked : (this.mBusy ? t.accent : t.dim))
+          .child(this.mStat))))
       .child(h_flex().pt(16).gap(8).justify_end()
         .when(!this.mBusy, el => el
           .child(btn("md-cancel", "Cancel", false, cx => closeOverlay(p.overlay)))
