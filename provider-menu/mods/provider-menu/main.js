@@ -778,7 +778,8 @@ export default class ProviderMenu extends View {
     const label = (id, text, pt = 0) => div().id(id).pt(pt).text_size(11).text_color(t.dim).child(text);
     return v_flex().id("move-card").flex_none().mt(2).px(6).py(6).gap(2).rounded(6).bg(t.raised)
       .child(h_flex().items_center().gap(6)
-        .child(div().text_size(12.5).font_semibold().child("Copy " + HARNESS[m.app].title + " session"))
+        .child(div().text_size(12.5).font_semibold()
+          .child((m.target?.gate?.kind === "resume" ? "Update" : "Copy") + " " + HARNESS[m.app].title + " session"))
         .child(div().flex_1())
         .child(h_flex().id("move-cancel").size(16).items_center().justify_center().rounded(5)
           .text_size(11).text_color(t.dim)
@@ -869,7 +870,12 @@ export default class ProviderMenu extends View {
               .when(m.armed, s => s.bg(t.accent))
               .when(!m.armed, s => s.border_1().border_color(t.input))
               .when(m.armed, s => s.child(div().text_size(9.5).text_color(t.surface).child("✓")))))
-          .child(div().flex_1().min_w(0).text_size(12.5).text_color(m.armed ? t.foreground : t.dim).child("Copy the session and workspace above")))
+          // The verb names what clicking a provider will do: a first copy
+          // copies, a marker'd target updates (the gate's own word — the
+          // to-line tag says update, the sentence above the button must
+          // not promise the other thing).
+          .child(div().flex_1().min_w(0).text_size(12.5).text_color(m.armed ? t.foreground : t.dim)
+            .child((m.target?.gate?.kind === "resume" ? "Update" : "Copy") + " the session and workspace above")))
         // The guidance zone: a hairline, then EITHER the run row or the
         // tips — the pick is done once a transfer runs, so the status and
         // its Cancel chip take the tips' place exactly (the card docks at
@@ -886,7 +892,7 @@ export default class ProviderMenu extends View {
               .on_click((_e, cx) => { this.cancel = true; this.xstat = "canceling…"; cx.notify(); })
               .child(div().text_size(11).child("Cancel")))))
           .when(!m.busy, e3 => e3.child(div().id("move-pick").pt(4).text_size(12.5)
-            .text_color("#a16207").child("Pick a " + HARNESS[m.app].title + " provider above to copy and resume")))));
+            .text_color("#a16207").child("Pick a " + HARNESS[m.app].title + " provider above to " + (m.target?.gate?.kind === "resume" ? "update" : "copy") + " and resume")))));
   }
 
   /// The move confirmation + transfer progress (T12). Runs the whole move:
@@ -920,7 +926,7 @@ export default class ProviderMenu extends View {
       .on_key_down((e, cx) => { if (e.key === "escape" && !this.mBusy) { closeOverlay(p.overlay); cx.stop_propagation(); } })
       .w_full().min_h(0).p(18).gap(2).bg(t.popover).text_color(t.foreground)
       .child(h_flex().items_center()
-        .child(div().flex_1().text_size(15).font_semibold().child("Copy session"))
+        .child(div().flex_1().text_size(15).font_semibold().child(m.target?.gate?.kind === "resume" ? "Update session" : "Copy session"))
         .when(!this.mBusy, el => el.child(this.escChip(p))))
       .child(div().pt(8).text_size(12.3)
         .child((this.mProvider?.name ?? "This provider") + " resumes the staged " + HARNESS[m.app]?.title + " session on " + (m.target?.machine === "" ? "this machine" : m.target?.machine) + "."))
@@ -944,7 +950,7 @@ export default class ProviderMenu extends View {
       .child(h_flex().pt(16).gap(8).justify_end()
         .when(!this.mBusy, el => el
           .child(btn("md-cancel", "Cancel", false, cx => closeOverlay(p.overlay)))
-          .child(btn("md-go", "Copy", true, go))));
+          .child(btn("md-go", m.target?.gate?.kind === "resume" ? "Update" : "Copy", true, go))));
   }
 
   /// The fork decision (T12 ④): the source agent still holds the whole
@@ -1095,11 +1101,14 @@ export default class ProviderMenu extends View {
     return h_flex().id("moverow").h(26).px(6).gap(8).items_center().rounded(6)
       .when(!lock, el => el.hover(s => s.bg(t.raised)).cursor_pointer())
       .on_click((_e, cx) => this.startMove(cx))
-      .child(div().text_size(10.5).text_color(t.dim).child("copy session"))
+      // The feature's entry point: the header's own size and color, caps,
+      // and a solid green Stage chip (the from-radio's green) — a meta-row
+      // at 10.5 dim measured as too easy to miss.
+      .child(div().text_size(12.5).child("COPY SESSION"))
       .child(div().flex_1())
       .child(h_flex().id("move-stage").h(18).px(7).items_center().rounded(6)
-        .border_1().border_color(t.input).bg(t.raised)
-        .child(div().text_size(10).child("Stage ›")));
+        .bg("#15803d")
+        .child(div().text_size(11).text_color("#ffffff").child("STAGE ›")));
   }
 
   /// The tab-bar toggle pill: one click shows or hides the docked panel. The
