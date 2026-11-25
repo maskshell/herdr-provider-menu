@@ -159,6 +159,18 @@ export default class ProviderMenu extends View {
     this.move = shared(MOVE) ?? null;
     this.movePrompt = null;
     this.wasHidden = null; // tri-state: null until the first render says shown/hidden
+    // The docked panel owns the transfer (T12): dialog surfaces (mode) and
+    // toggle blocks (role) must never race it. A busy flag that survives a
+    // restart is a run the restart killed — convert it to a note instead of
+    // letting the watcher auto-restart the copy unannounced.
+    this.owner = !(_props?.mode || _props?.role);
+    this.xfer = false;
+    this.cancel = false;
+    this.xstat = "";
+    if (this.owner && this.move?.busy) {
+      this.move = { ...this.move, busy: false, note: "Copy interrupted by a restart — start it again from a provider." };
+      setShared(MOVE, this.move);
+    }
     // check runs init for real but exec would warn: read-only, still skip it.
     if (!checking()) {
       this.refresh(cx);
@@ -184,6 +196,10 @@ export default class ProviderMenu extends View {
           last = tab;
           if (this.move && !this.move.target) cx.notify();
         }
+        // Transfer ownership (T12): the dialog's Copy hands off by flipping
+        // busy; the owning panel starts the run within one tick. Esc cannot
+        // reach it — a docked view has no overlay to close.
+        if (this.owner && this.move?.busy && !this.xfer) this.runCopy(cx);
       }
     });
   }
@@ -233,7 +249,12 @@ export default class ProviderMenu extends View {
   /// the first launch per source>target pair asks (Pass 36).
   launch(p, cx, app) {
     // T12: an armed move reroutes the provider click — same harness, other
-    // machine, and the confirm dialog runs the transfer.
+    // machine, and the confirm dialog runs the transfer. While a transfer
+    // runs, the card owns the click: one copy at a time.
+    if (this.move?.busy) {
+      this.launchNote = "Copy: a transfer is running — cancel it or let it finish first.";
+      cx.notify(); return;
+    }
     if (this.move?.armed && this.move?.target?.gate?.ok) {
       const dst = spaces().find(s => s.active)?.machine ?? "";
       if (app !== this.move.app) {
@@ -336,8 +357,12 @@ export default class ProviderMenu extends View {
         .child(div().flex_1().child(p.name))
         .child(div().text_size(10).text_color(t.dim).child("cc-switch"));
     }
+    // Inert while a transfer runs (the launch guard answers the click
+    // with a sentence): dimmed, no hover — one copy at a time.
+    const lock = !!this.move?.busy;
     return h_flex().id("provider-" + app + "-" + i).h(30).pl(24).pr(9).gap(8).items_center().rounded(6)
-      .text_color(t.foreground).hover(s => s.bg(t.selected))
+      .text_color(lock ? t.dim : t.foreground)
+      .when(!lock, el => el.hover(s => s.bg(t.selected)))
       .on_click((_e, cx) => this.launch(p, cx, app))
       .child(div().flex_1().child(p.name))
       .when(p.current, el => el.child(div().text_size(10).text_color(t.dim).child("current")));
@@ -519,6 +544,10 @@ export default class ProviderMenu extends View {
     this.launchNote = "";
     this.refresh(cx);
     cx.spawn(async cx => {
+      if (this.move?.busy) {
+        this.launchNote = "Copy: a transfer is running — cancel it or let it finish first.";
+        cx.notify(); return;
+      }
       let focus = null;
       try { focus = (await agents()).find(a => a.focused) ?? null; } catch { focus = null; }
       const app = focus ? APP_OF[focus.app] : null;
@@ -600,9 +629,14 @@ export default class ProviderMenu extends View {
     // The boxed ✕: the same 13px box shape as the arm checkbox so the lead
     // column's controls read as one family, red because it drops the picked
     // target. The 16px cell stays the hit area.
+    const lock = !!this.move?.busy;
     return h_flex().id("move-repick").size(16).flex_none().items_start().justify_center()
-      .rounded(5).cursor_pointer().hover(s => s.bg(t.selected))
-      .on_click((_e, cx) => { this.move = { ...this.move, target: null, armed: false, note: "" }; setShared(MOVE, this.move); cx.notify(); })
+      .rounded(5)
+      .when(!lock, el => el.cursor_pointer().hover(s => s.bg(t.selected)))
+      .on_click((_e, cx) => {
+          if (this.move?.busy) return; // a run owns the pick until it ends
+          this.move = { ...this.move, target: null, armed: false, note: "", err: "" }; setShared(MOVE, this.move); cx.notify();
+        })
       .child(h_flex().size(13).mt(2).rounded(3).items_center().justify_center()
         .border_1().border_color(t.blocked).text_size(9.5).text_color(t.blocked).child("✕"));
   }
@@ -627,6 +661,7 @@ export default class ProviderMenu extends View {
   /// Pick one shell's cwd as the target: the gate runs now (empty, lineage
   /// marker, or refused with the reason).
   pickTarget(cx, dir) {
+    if (this.move?.busy) return;
     cx.spawn(async cx => {
       const machine = spaces().find(s => s.active)?.machine ?? null;
       if ((machine ?? "") === this.move.src) {
@@ -641,9 +676,70 @@ export default class ProviderMenu extends View {
   }
 
   clearMove() {
+    if (this.move?.busy) return; // a run owns the card until it ends
     this.move = null;
     this.movePrompt = null;
     setShared(MOVE, null);
+  }
+
+  /// The transfer itself (T12), owned by the PANEL instance: a docked view
+  /// survives what an overlay does not — the app's Esc closes dialogs
+  /// before a mod can see the key, and a task tied to the dialog's view is
+  /// stranded mid-await with nothing of ours left running. Here the run has
+  /// exactly one exit, the card's Cancel button. Cancellation is
+  /// cooperative: the flag is checked between steps and from inside the
+  /// transfer's progress callback, and because the task stays alive the
+  /// abort path sweeps the pack artifacts off both machines AT ONCE.
+  runCopy(cx) {
+    this.xfer = true;
+    this.cancel = false;
+    this.xstat = "listing the workspace…";
+    const m = { ...this.move };
+    cx.notify();
+    cx.spawn(async cx => {
+      try {
+        const src = m.src === "" ? null : m.src;
+        const dst = m.target.machine === "" ? null : m.target.machine;
+        // Any pack artifacts a strand-era run left behind: both ends,
+        // deterministic paths, best effort — then this run's own packing
+        // starts from clean ground.
+        await cleanupPacks(src, dst, slugOf(m.root));
+        const manifest = await buildManifest(src, m.root);
+        if (this.cancel) throw new Error("canceled");
+        const id = m.id ?? newId();
+        const gate = await targetGate(dst, m.target.dir, m.id ? id : null);
+        if (!gate.ok) throw new Error(gate.reason);
+        this.xstat = "copying…"; cx.notify();
+        const plan = transferPlan(manifest, gate.marker);
+        await runTransfer(src, m.root, manifest, dst, m.target.dir, plan,
+          (d, n) => { if (this.cancel) throw new Error("canceled"); this.xstat = "copying " + d + "/" + n; cx.notify(); });
+        if (this.cancel) throw new Error("canceled");
+        this.xstat = "verifying…"; cx.notify();
+        await verifyCopied(dst, m.target.dir, manifest, plan);
+        if (this.cancel) throw new Error("canceled");
+        await writeMarker(src, m.root, { v: 1, id, at: Date.now(), manifest: markerManifest(manifest) });
+        await writeMarker(dst, m.target.dir, { v: 1, id, at: Date.now(), manifest: markerManifest(manifest) });
+        this.xstat = "placing the session…"; cx.notify();
+        if (m.app === "codex") await placeCodexSession(src, m.session, dst, m.target.dir);
+        else await placeClaudeSession(src, m.session, dst, m.target.dir);
+        const space = spaces().find(s => s.active);
+        const prompt = (m.prompt ?? "").trim() || "continue";
+        const argv = await launchArgv(m.provider, resumeArgs(m.app, m.session.uuid ?? m.session.id, prompt), dst, m.app, src);
+        run("tab.new", { name: HARNESS[m.app].title + " (" + m.provider.name + ")", space: space?.id, argv });
+        setShared(MOVE, null);
+        openOverlay({ mod: "provider-menu", kind: "dialog", width: 520, height: 250, props: { mode: "moved", address: m.address ?? "", name: m.src === "" ? "this machine" : m.src, provider: m.provider.name } });
+      } catch (e) {
+        const msg = String(e?.message ?? e);
+        try { await cleanupPacks(m.src === "" ? null : m.src, m.target.machine === "" ? null : m.target.machine, slugOf(m.root)); } catch { /* best effort */ }
+        setShared(MOVE, msg === "canceled"
+          ? { ...m, busy: false, err: "", note: "Copy canceled — pack files were removed on both machines." }
+          : { ...m, busy: false, err: "Copy failed: " + msg });
+        cx.notify();
+      } finally {
+        this.xfer = false;
+        this.xstat = "";
+      }
+    });
   }
 
   /// The docked staging card: session line, target lines (or the shell
@@ -668,7 +764,8 @@ export default class ProviderMenu extends View {
         .child(div().text_size(12.5).font_semibold().child("Copy " + HARNESS[m.app].title + " session"))
         .child(div().flex_1())
         .child(h_flex().id("move-cancel").size(16).items_center().justify_center().rounded(5)
-          .text_size(11).text_color(t.dim).cursor_pointer().hover(s => s.bg(t.selected))
+          .text_size(11).text_color(t.dim)
+          .when(!m.busy, el => el.cursor_pointer().hover(s => s.bg(t.selected)))
           .on_click(() => this.clearMove()).child("✕")))
       // The staged path is the card's subject — foreground, not dim. The
       // source line carries a selected radio (its own one-item group,
@@ -719,17 +816,8 @@ export default class ProviderMenu extends View {
           ]));
       })
       .when(m.note, el => el.child(line("move-note", m.note, 2)))
-      // True while the dialog runs AND forever after a mid-run cancel (the
-      // stranded task never clears it): closing the dialog cancels the copy;
-      // pack files on both machines are swept on re-entry. A first copy
-      // interrupted mid-transfer leaves an unmarked target the gate refuses
-      // until emptied; an interrupted UPDATE self-heals — the old marker
-      // still describes the old state, so the retry's delta re-copies the
-      // half-written files. Never suggest emptying a marker'd target.
-      .when(m.busy, el => el.child(div().id("move-busy").pt(2).text_size(12.5).text_color(t.blocked)
-        .child(m.target?.gate?.kind === "fresh"
-          ? "Copy running — closing the dialog cancels it. Pack files are swept on both machines afterwards; a partially copied target must be emptied before a retry."
-          : "Copy running — closing the dialog cancels it. Pack files are swept on both machines afterwards; an interrupted update can simply be retried.")))
+      .when(m.err, el => el.child(div().id("move-err").pt(2).text_size(12.5).text_color(t.blocked).child(m.err)))
+
       // The refused reason and the promoted line can outrun the 280px panel:
       // min_w(0) lets flex_1 actually bound the text (a flex item's
       // min-content width otherwise stretches it past the edge), the row
@@ -754,21 +842,34 @@ export default class ProviderMenu extends View {
         // sit in the same 16px lead, so the promoted line and this label
         // start at the same x and the hover block matches a candidate row.
         .child(h_flex().id("move-arm").pt(3).pl(8).pr(3).min_h(20).items_start().gap(5).rounded(6)
-          .cursor_pointer().hover(s => s.bg(t.selected))
-          .on_click((_e, cx) => { this.move = { ...this.move, armed: !this.move.armed }; setShared(MOVE, this.move); cx.notify(); })
+          .when(!m.busy, e1 => e1.cursor_pointer().hover(s => s.bg(t.selected)))
+          .on_click((_e, cx) => {
+            if (this.move?.busy) return;
+            this.move = { ...this.move, armed: !this.move.armed }; setShared(MOVE, this.move); cx.notify();
+          })
           .child(h_flex().size(16).flex_none().items_start().justify_center()
             .child(h_flex().size(13).mt(2).rounded(3).items_center().justify_center()
               .when(m.armed, s => s.bg(t.accent))
               .when(!m.armed, s => s.border_1().border_color(t.input))
               .when(m.armed, s => s.child(div().text_size(9.5).text_color(t.surface).child("✓")))))
           .child(div().flex_1().min_w(0).text_size(12.5).text_color(m.armed ? t.foreground : t.dim).child("Copy the session and workspace above")))
-        // A hairline separates the guidance zone from the picks above it;
-        // the line itself reads as guidance: pale gold, one step quieter
-        // than the rows but clearly not an error.
+        // The guidance zone: a hairline, then EITHER the run row or the
+        // tips — the pick is done once a transfer runs, so the status and
+        // its Cancel chip take the tips' place exactly (the card docks at
+        // the panel's bottom; appending would push past the edge —
+        // measured: clipped). The tips returns when the card is free.
         .when(m.armed, e2 => e2
           .child(div().id("move-pick-rule").mt(5).h(1).bg(t.input))
-          .child(div().id("move-pick").pt(4).text_size(12.5)
-            .text_color("#a16207").child("Pick a " + HARNESS[m.app].title + " provider above to copy and resume"))));
+          .when(m.busy, e3 => e3.child(h_flex().pt(4).pl(0).pr(3).items_center().gap(6)
+            .child(div().flex_1().min_w(0).text_size(12.5).text_color(t.accent)
+              .child(this.xstat || "copying…"))
+            .child(h_flex().id("move-cancel-run").h(18).px(7).flex_none().items_center().rounded(6)
+              .border_1().border_color(t.input).bg(t.raised).cursor_pointer()
+              .hover(s => s.bg(t.selected))
+              .on_click((_e, cx) => { this.cancel = true; this.xstat = "canceling…"; cx.notify(); })
+              .child(div().text_size(11).child("Cancel")))))
+          .when(!m.busy, e3 => e3.child(div().id("move-pick").pt(4).text_size(12.5)
+            .text_color("#a16207").child("Pick a " + HARNESS[m.app].title + " provider above to copy and resume")))));
   }
 
   /// The move confirmation + transfer progress (T12). Runs the whole move:
@@ -781,56 +882,16 @@ export default class ProviderMenu extends View {
     const p = props() ?? {};
     const m = this.mMove ?? {};
     const go = cx => {
-      if (this.mBusy) return;
-      this.mBusy = true;
-      this.mErr = false;
-      this.mStat = "listing the workspace…";
-      // The panel shows the in-flight flag: closing this dialog mid-run
-      // strands the whole task (nothing of ours executes after), so this
-      // flag is the only trace a canceled copy leaves in shared state.
-      setShared(MOVE, { ...m, busy: true });
-      // Notify NOW: without it the busy state never renders until the first
-      // async update, and a slow source manifest leaves the buttons looking
-      // alive while every further click dies on the mBusy gate.
-      cx.notify();
-      cx.spawn(async cx => {
-        try {
-          const src = m.src === "" ? null : m.src;
-          const dst = m.target.machine === "" ? null : m.target.machine;
-          // Second re-entry sweep (the dialog may have been opened before
-          // the strand, so launch() never ran): both ends, deterministic
-          // paths, best effort.
-          await cleanupPacks(src, dst, slugOf(m.root));
-          const manifest = await buildManifest(src, m.root);
-          const id = m.id ?? newId();
-          const gate = await targetGate(dst, m.target.dir, m.id ? id : null);
-          if (!gate.ok) throw new Error(gate.reason);
-          this.mStat = "copying…"; cx.notify();
-          const plan = transferPlan(manifest, gate.marker);
-          await runTransfer(src, m.root, manifest, dst, m.target.dir, plan,
-            (d, n) => { this.mStat = "copying " + d + "/" + n; cx.notify(); });
-          this.mStat = "verifying…"; cx.notify();
-          await verifyCopied(dst, m.target.dir, manifest, plan);
-          await writeMarker(src, m.root, { v: 1, id, at: Date.now(), manifest: markerManifest(manifest) });
-          await writeMarker(dst, m.target.dir, { v: 1, id, at: Date.now(), manifest: markerManifest(manifest) });
-          this.mStat = "placing the session…"; cx.notify();
-          if (m.app === "codex") await placeCodexSession(src, m.session, dst, m.target.dir);
-          else await placeClaudeSession(src, m.session, dst, m.target.dir);
-          const space = spaces().find(s => s.active);
-          const prompt = (this.mInput ? this.mInput.value() : "").trim() || "continue";
-          const argv = await launchArgv(this.mProvider, resumeArgs(m.app, m.session.uuid ?? m.session.id, prompt), dst, m.app, src);
-          closeOverlay(p.overlay);
-          run("tab.new", { name: HARNESS[m.app].title + " (" + this.mProvider.name + ")", space: space?.id, argv });
-          setShared(MOVE, null);
-          openOverlay({ mod: "provider-menu", kind: "dialog", width: 520, height: 250, props: { mode: "moved", address: m.address ?? "", name: m.src === "" ? "this machine" : m.src, provider: this.mProvider.name } });
-        } catch (e) {
-          this.mBusy = false;
-          this.mErr = true;
-          this.mStat = String(e?.message ?? e);
-          setShared(MOVE, { ...m, busy: false });
-          cx.notify();
-        }
-      });
+      // The handoff, not the run: the transfer lives in the PANEL instance
+      // — a docked view Esc cannot kill (the app closes overlays before a
+      // mod sees the key, and a task tied to the dialog's view dies with
+      // it, mid-await, leaving none of our code running). The dialog hands
+      // the run over by flipping busy and closes itself; the panel's
+      // watcher starts the copy within 300ms. Cancel is therefore a real
+      // button on the card, a capturable on_click — the only exit.
+      const prompt = (this.mInput ? this.mInput.value() : "").trim();
+      setShared(MOVE, { ...m, busy: true, prompt, provider: this.mProvider });
+      closeOverlay(p.overlay);
     };
     const btn = (id, label, solid, act) => h_flex().id(id).h(30).px(12).items_center().rounded(8)
       .border_1().border_color(solid ? t.solid : t.input)
@@ -1011,8 +1072,11 @@ export default class ProviderMenu extends View {
   /// Always available — restaging just picks the session now in focus.
   moveRow() {
     const t = theme();
+    // While a transfer runs the row is inert: one copy at a time, and the
+    // card below is the run's whole UI.
+    const lock = !!this.move?.busy;
     return h_flex().id("moverow").h(26).px(6).gap(8).items_center().rounded(6)
-      .hover(s => s.bg(t.raised)).cursor_pointer()
+      .when(!lock, el => el.hover(s => s.bg(t.raised)).cursor_pointer())
       .on_click((_e, cx) => this.startMove(cx))
       .child(div().text_size(10.5).text_color(t.dim).child("copy session"))
       .child(div().flex_1())
