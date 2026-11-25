@@ -423,7 +423,7 @@ export async function targetPlatform(machine) {
   if (key in PLAT) return PLAT[key];
   let word = "";
   try {
-    const r = await exec("sh", ["-c", "uname -s 2>/dev/null"], { on: machine });
+    const r = await exec("sh", ["-c", "uname -s 2>/dev/null"], { on: machine === "" ? null : machine });
     const u = r.stdout.trim();
     word = u === "Linux" ? "linux" : u === "Darwin" ? "macOS" : u;
   } catch { word = ""; }
@@ -439,7 +439,7 @@ export async function excludedPresent(machine, root) {
     const r = await exec("sh", ["-c",
       'cd "$1" 2>/dev/null || exit 1; shift;'
       + ' for d do [ -d "$d" ] && printf "%s\\n" "$d"; done; exit 0',
-      "sh", root, ...EXCLUDE], { on: machine });
+      "sh", root, ...EXCLUDE], { on: machine === "" ? null : machine });
     if (r.code !== 0) return null;
     return r.stdout.split("\n").filter(Boolean);
   } catch { return null; }
@@ -475,11 +475,16 @@ export function resumeArgs(app, id, prompt) {
 /// Deliberately uncached: branches switch between copies, and a stale
 /// name in the drift sentence would be worse than the exec it saves.
 export async function readGitBranch(machine, root) {
-  const r = await exec("sh", ["-c",
-    'h=$(sed -n "s|^ref: refs/heads/||p" "$1/.git/HEAD" 2>/dev/null);'
-    + ' [ -n "$h" ] || h=$(cut -c1-7 "$1/.git/HEAD" 2>/dev/null); printf %s "$h"',
-    "sh", root], { on: machine });
-  return r.code === 0 ? r.stdout.trim() : "";
+  // A display probe (the dialog's drift sentence): any failure degrades to
+  // "unknown branch" — never throws. exec also rejects an {on: ""} machine
+  // name, so "" (this machine) is normalized to null before anything runs.
+  try {
+    const r = await exec("sh", ["-c",
+      'h=$(sed -n "s|^ref: refs/heads/||p" "$1/.git/HEAD" 2>/dev/null);'
+      + ' [ -n "$h" ] || h=$(cut -c1-7 "$1/.git/HEAD" 2>/dev/null); printf %s "$h"',
+      "sh", root], { on: machine === "" ? null : machine });
+    return r.code === 0 ? r.stdout.trim() : "";
+  } catch { return ""; }
 }
 
 /// How far the target drifted from the last copy's baseline: files whose
@@ -487,16 +492,21 @@ export async function readGitBranch(machine, root) {
 /// are gone. Feeds the confirm dialog's honest sentence — the copy then
 /// overwrites them (the parking-spot rule, now said out loud with a count).
 export async function countDrift(machine, root, marker) {
-  const rels = Object.keys(marker?.manifest ?? {});
-  if (!rels.length) return 0;
-  const gone = (await exec("sh", ["-c",
-    'cd "$1" 2>/dev/null || exit 0; shift;'
-    + ' for f do [ -e "$f" ] || printf "%s\\n" "$f"; done; exit 0',
-    "sh", root, ...rels], { on: machine })).stdout.split("\n").filter(Boolean);
-  const goneSet = new Set(gone);
-  const here = rels.filter(r => !goneSet.has(r));
-  const hashes = here.length ? await hashRels(machine, root, here) : {};
-  let drift = gone.length;
-  for (const rel of here) if (hashes[rel] !== marker.manifest[rel]) drift++;
-  return drift;
+  // Same deal as readGitBranch: a number for the drift sentence, 0 when it
+  // cannot be told — never throws.
+  try {
+    const on = machine === "" ? null : machine;
+    const rels = Object.keys(marker?.manifest ?? {});
+    if (!rels.length) return 0;
+    const gone = (await exec("sh", ["-c",
+      'cd "$1" 2>/dev/null || exit 0; shift;'
+      + ' for f do [ -e "$f" ] || printf "%s\\n" "$f"; done; exit 0',
+      "sh", root, ...rels], { on })).stdout.split("\n").filter(Boolean);
+    const goneSet = new Set(gone);
+    const here = rels.filter(r => !goneSet.has(r));
+    const hashes = here.length ? await hashRels(on, root, here) : {};
+    let drift = gone.length;
+    for (const rel of here) if (hashes[rel] !== marker.manifest[rel]) drift++;
+    return drift;
+  } catch { return 0; }
 }

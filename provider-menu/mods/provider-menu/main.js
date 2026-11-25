@@ -246,15 +246,26 @@ export default class ProviderMenu extends View {
       }
       cx.spawn(async cx => {
         const m = this.move;
-        const [platform, excluded, srcBranch, dstBranch, drift] = await Promise.all([
-          targetPlatform(dst), excludedPresent(m.src, m.root),
-          readGitBranch(m.src, m.root), readGitBranch(dst, m.target.dir),
-          countDrift(dst, m.target.dir, m.target.gate?.marker),
-        ]);
-        openOverlay({ mod: "provider-menu", kind: "dialog", width: 560, height: 340,
-          props: { mode: "move", provider: p, app, move: { ...m, address: m.address ?? "" },
-            prompt: defaultPrompt(m.target.dir, platform, excluded),
-            drift, srcBranch, dstBranch } });
+        try {
+          // The copy's two ends come from the staged state, not from the
+          // space the panel happens to sit in now (arming survives a space
+          // switch); "" is this machine and exec wants null for it.
+          const src = m.src === "" ? null : m.src;
+          const dstT = m.target.machine === "" ? null : m.target.machine;
+          const [platform, excluded, srcBranch, dstBranch, drift] = await Promise.all([
+            targetPlatform(dstT), excludedPresent(src, m.root),
+            readGitBranch(src, m.root), readGitBranch(dstT, m.target.dir),
+            countDrift(dstT, m.target.dir, m.target.gate?.marker),
+          ]);
+          openOverlay({ mod: "provider-menu", kind: "dialog", width: 560, height: 340,
+            props: { mode: "move", provider: p, app, move: { ...m, address: m.address ?? "" },
+              prompt: defaultPrompt(m.target.dir, platform, excluded),
+              drift, srcBranch, dstBranch } });
+        } catch (e) {
+          // A dead probe must not kill the click silently — the dialog's go()
+          // re-runs the gate authoritatively, these only dress it up.
+          this.launchNote = "Copy: could not prepare the dialog (" + String(e?.message ?? e) + ") — try again.";
+        }
         cx.notify();
       });
       return;
@@ -625,7 +636,11 @@ export default class ProviderMenu extends View {
     const m = this.move;
     if (!m) return null;
     const cur = spaces().find(s => s.active)?.machine ?? "";
-    const srcName = m.src === "" ? "this machine" : m.src;
+    // Machine names cap at 12 chars with an ellipsis — the header chip's
+    // convention — so a long name cannot narrow the path column into a
+    // tall stack of wrapped slivers.
+    const nm = s => s.length > 12 ? s.slice(0, 11) + "…" : s;
+    const srcName = nm(m.src === "" ? "this machine" : m.src);
     const line = (id, text, pt) => div().id(id).pt(pt).text_size(12.5).text_color(t.dim).child(text);
     // A group label: one step under its rows, sitting at the margin while
     // the rows indent under it — the card's hierarchy cue.
@@ -697,7 +712,7 @@ export default class ProviderMenu extends View {
         .child(h_flex().pt(2).pl(8).pr(3).min_h(20).items_start().gap(5)
           .child(this.repickX())
           .child(div().flex_none().text_size(12.5).text_color(t.dim)
-            .child("to " + (m.target.machine === "" ? "this machine" : m.target.machine) + " ·"))
+            .child("to " + nm(m.target.machine === "" ? "this machine" : m.target.machine) + " ·"))
           .child(div().flex_1().min_w(0).text_size(12.5).text_color(t.foreground)
             .child(m.target.dir + " (" + (m.target.gate.kind === "fresh" ? "first copy" : "update") + ")")))
         // The arm checkbox joins the pick column: radio dot → ✕ → box all
@@ -729,6 +744,10 @@ export default class ProviderMenu extends View {
       this.mBusy = true;
       this.mErr = false;
       this.mStat = "listing the workspace…";
+      // Notify NOW: without it the busy state never renders until the first
+      // async update, and a slow source manifest leaves the buttons looking
+      // alive while every further click dies on the mBusy gate.
+      cx.notify();
       cx.spawn(async cx => {
         try {
           const src = m.src === "" ? null : m.src;
