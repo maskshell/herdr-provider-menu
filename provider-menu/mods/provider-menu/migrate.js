@@ -201,7 +201,7 @@ export async function targetGate(machine, dir, expectId) {
   if (state === "empty") return { ok: true, kind: "fresh" };
   if (probe.code !== 0) return { ok: false, reason: "could not inspect (" + (probe.stderr || "exit " + probe.code) + ")" };
   const marker = await readMarker(machine, dir);
-  if (!marker) return { ok: false, reason: "not empty and no copy marker — empty it or pick another directory" };
+  if (!marker) return { ok: false, reason: "not empty and no copy marker" };
   if (expectId && marker.id !== expectId)
     return { ok: false, reason: "holds a different workspace's marker" };
   if (!expectId)

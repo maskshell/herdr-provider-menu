@@ -552,7 +552,7 @@ export default class ProviderMenu extends View {
     const cur = spaces().find(s => s.active)?.machine ?? "";
     const curName = cur === "" ? "this machine" : cur;
     if (cur === this.move.src) {
-      this.move = { ...this.move, shells: null, note: "this is the source machine — switch to a space on another machine" };
+      this.move = { ...this.move, shells: null, note: "This is the source machine — switch to a space on another machine" };
       setShared(MOVE, this.move); cx.notify(); return;
     }
     const tabs = new Set(spaces()
@@ -561,18 +561,38 @@ export default class ProviderMenu extends View {
     const shells = [...new Set(panes()
       .filter(p => p.terminal && p.cwd && !p.status && tabs.has(p.tab))
       .map(p => String(p.cwd)))];
-    this.move = { ...this.move, shells, note: shells.length ? "" : "no shells on " + curName + " — open one and cd to a directory" };
+    this.move = { ...this.move, shells, note: shells.length ? "" : "No shells on " + curName + " — open one and cd to a directory" };
     setShared(MOVE, this.move);
     cx.notify();
   }
 
-  /// One clickable shell row: "› <cwd>", long paths truncated from the left.
+  /// The way back from a picked target: the promoted line leads with an ✕
+  /// — clicking it clears the pick (the candidate rows return, the shell
+  /// list survives, nothing is re-staged), disarms, and works for a
+  /// refused pick too, which otherwise dead-ends the card.
+  repickX() {
+    const t = theme();
+    return h_flex().id("move-repick").size(16).flex_none().items_center().justify_center()
+      .rounded(5).text_size(10).text_color(t.dim).cursor_pointer().hover(s => s.bg(t.selected))
+      .on_click((_e, cx) => { this.move = { ...this.move, target: null, armed: false, note: "" }; setShared(MOVE, this.move); cx.notify(); })
+      .child("✕");
+  }
+
+  /// One candidate row: a radio dot (the candidates — current tab and
+  /// listed shells — are one single-choice group; a plain "›" row reads
+  /// as text until hovered) and the cwd, truncated from the left.
   shellRow(id, dir) {
     const t = theme();
-    return h_flex().id(id).pt(2).px(3).h(20).items_center().rounded(6)
+    const sel = this.move?.target?.dir === dir;
+    return h_flex().id(id).pt(2).pl(8).pr(3).h(20).items_center().gap(5).rounded(6)
       .cursor_pointer().hover(s => s.bg(t.selected))
       .on_click((_e, cx) => this.pickTarget(cx, dir))
-      .child(div().text_size(10.5).child("› " + (dir.length > 40 ? "…" + dir.slice(-39) : dir)));
+      .child(h_flex().size(16).flex_none().items_center().justify_center()
+        .child(h_flex().size(11).items_center().justify_center()
+          .rounded_full().border_1().border_color(sel ? t.accent : t.input)
+          .when(sel, s => s.child(div().size(5).rounded_full().bg(t.accent)))))
+      .child(div().text_size(10.5).text_color(sel ? t.foreground : t.dim)
+        .child(dir.length > 40 ? "…" + dir.slice(-39) : dir));
   }
 
   /// Pick one shell's cwd as the target: the gate runs now (empty, lineage
@@ -581,7 +601,7 @@ export default class ProviderMenu extends View {
     cx.spawn(async cx => {
       const machine = spaces().find(s => s.active)?.machine ?? null;
       if ((machine ?? "") === this.move.src) {
-        this.move = { ...this.move, target: null, note: "this is the source machine — switch to another machine's space" };
+        this.move = { ...this.move, target: null, note: "This is the source machine — switch to another machine's space" };
         setShared(MOVE, this.move); cx.notify(); return;
       }
       const gate = await targetGate(machine, dir, this.move.id);
@@ -607,6 +627,9 @@ export default class ProviderMenu extends View {
     const cur = spaces().find(s => s.active)?.machine ?? "";
     const srcName = m.src === "" ? "this machine" : m.src;
     const line = (id, text, pt) => div().id(id).pt(pt).text_size(10.5).text_color(t.dim).child(text);
+    // A group label: smaller than its rows, sitting at the margin while
+    // the rows indent under it — the card's hierarchy cue.
+    const label = (id, text, pt = 0) => div().id(id).pt(pt).text_size(9.5).text_color(t.dim).child(text);
     return v_flex().id("move-card").flex_none().mt(2).px(6).py(6).gap(2).rounded(6).bg(t.raised)
       .child(h_flex().items_center().gap(6)
         .child(div().text_size(10.5).font_semibold().child("copy " + HARNESS[m.app].title.toLowerCase() + " session"))
@@ -616,7 +639,7 @@ export default class ProviderMenu extends View {
           .on_click(() => this.clearMove()).child("✕")))
       .child(line("move-src", "from " + srcName + " · " + m.root, 2))
       .when(!m.target && cur === m.src, el => el.child(line("move-hint-src",
-        "switch to a space on another machine, open a shell there, cd to an empty directory", 2)))
+        "Switch to a space on another machine, open a shell there, cd to an empty directory", 2)))
       .when(!m.target && cur !== m.src, el => {
         // The current tab leads: its shells are what the person is looking
         // at right now, so they show without a click (init's watcher pings
@@ -630,25 +653,36 @@ export default class ProviderMenu extends View {
         const nowSet = new Set(now);
         return el
           .when(now.length, e => e.children([
-            line("move-cur", "current tab", 2),
+            label("move-cur", "current tab", 4),
             ...now.map((dir, i) => this.shellRow("move-cur-" + i, dir)),
           ]))
           .when(!m.shells, e => e.child(h_flex().id("move-list").pt(2).px(7).h(18).items_center().rounded(6)
             .border_1().border_color(t.input).cursor_pointer().hover(s => s.bg(t.selected))
             .on_click((_e, cx) => this.shellTargets(cx))
-            .child(div().text_size(10).child("list shells on " + (cur === "" ? "this machine" : cur)))))
+            .child(div().text_size(10).child("List shells on " + (cur === "" ? "this machine" : cur)))))
           .when(m.shells, e => e.children([
-            line("move-shells-label", "shells on " + (cur === "" ? "this machine" : cur), 2),
+            h_flex().pt(4).items_center().gap(6)
+              .child(label("move-shells-label", "shells on " + (cur === "" ? "this machine" : cur)))
+              .child(div().flex_1())
+              .child(h_flex().id("move-relist").h(16).px(7).items_center().rounded(6)
+                .border_1().border_color(t.input).bg(t.raised).cursor_pointer()
+                .hover(s => s.bg(t.selected))
+                .on_click((_e, cx) => this.shellTargets(cx))
+                .child(div().text_size(9.5).child("Refresh"))),
             ...m.shells.filter(d => !nowSet.has(d)).slice(0, 4).map((dir, i) => this.shellRow("move-shell-" + i, dir)),
-            h_flex().pt(1).child(h_flex().id("move-relist").px(6).h(16).items_center().rounded(5)
-              .text_size(9.5).text_color(t.dim).cursor_pointer().hover(s => s.bg(t.selected))
-              .on_click((_e, cx) => this.shellTargets(cx)).child("refresh")),
           ]));
       })
       .when(m.note, el => el.child(line("move-note", m.note, 2)))
-      .when(m.target && !m.target.gate.ok, el => el.child(line("move-refused", m.target.dir + " — " + m.target.gate.reason + ". Pick another.", 2)))
+      .when(m.target && !m.target.gate.ok, el => el.child(h_flex().pt(2).pl(8).pr(3).h(20).items_center().gap(5)
+        .child(this.repickX())
+        .child(div().flex_1().text_size(10.5).text_color(t.blocked)
+          .child((m.target.dir.length > 14 ? "…" + m.target.dir.slice(-13) : m.target.dir)
+            + " — " + m.target.gate.reason + ". Pick another."))))
       .when(m.target && m.target.gate.ok, el => el
-        .child(line("move-target", "to " + (m.target.machine === "" ? "this machine" : m.target.machine) + " · " + m.target.dir + " (" + (m.target.gate.kind === "fresh" ? "first copy" : "update") + ")", 2))
+        .child(h_flex().pt(2).pl(8).pr(3).h(20).items_center().gap(5)
+          .child(this.repickX())
+          .child(div().text_size(10.5).text_color(t.dim)
+            .child("to " + (m.target.machine === "" ? "this machine" : m.target.machine) + " · " + m.target.dir + " (" + (m.target.gate.kind === "fresh" ? "first copy" : "update") + ")")))
         .child(h_flex().id("move-arm").pt(3).px(3).h(20).items_center().gap(5).rounded(6)
           .cursor_pointer().hover(s => s.bg(t.selected))
           .on_click((_e, cx) => { this.move = { ...this.move, armed: !this.move.armed }; setShared(MOVE, this.move); cx.notify(); })
@@ -732,7 +766,7 @@ export default class ProviderMenu extends View {
         .child(Input.new(this.mInput).h(32).px(10).rounded(9).border_1().border_color(t.input).bg(t.background).text_size(12))))
       .when(!this.mBusy && this.mInput, el => el.child(line("First message to the resumed session — its history mentions the old machine, a note helps.", 4)))
       .when(this.mStat, el => el.child(div().pt(10).text_size(11.5)
-        .text_color(this.mErr ? t.destructive : t.dim).child(this.mStat)))
+        .text_color(this.mErr ? t.blocked : t.dim).child(this.mStat)))
       .child(h_flex().pt(16).gap(8).justify_end()
         .when(!this.mBusy, el => el
           .child(btn("md-cancel", "Cancel", false, cx => closeOverlay(p.overlay)))
@@ -888,7 +922,7 @@ export default class ProviderMenu extends View {
       .child(div().flex_1())
       .child(h_flex().id("move-stage").h(18).px(7).items_center().rounded(6)
         .border_1().border_color(t.input).bg(t.raised)
-        .child(div().text_size(10).child("stage ›")));
+        .child(div().text_size(10).child("Stage ›")));
   }
 
   /// The tab-bar toggle pill: one click shows or hides the docked panel. The
