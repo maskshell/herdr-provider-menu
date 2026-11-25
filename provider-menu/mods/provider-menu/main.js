@@ -531,12 +531,22 @@ export default class ProviderMenu extends View {
       // The session's folder: the core that runs it lists the terminal's
       // cwd; the space's folder is the fallback (a remote core that cannot
       // be queried still stages, with the folder it starts terminals in).
-      let cwd = space?.folder ?? null;
-      try {
-        const r = machine ? await exec("hc", ["ls", "--json"], { on: machine }) : await hc(["ls", "--json"]);
-        const t = (JSON.parse(r.stdout ?? "{}").terminals ?? []).find(t => t.address === focus.address);
-        if (t?.cwd) cwd = t.cwd;
-      } catch { /* folder fallback */ }
+      // The session's folder: the pane list's cwd is the shell's LIVE
+      // folder. A terminal spawned elsewhere and cd'd into the project must
+      // stage from where the session really is — hc ls reports the SPAWN
+      // folder, which pointed discovery at the wrong project dir (measured
+      // on the user's rig: the wrong session, after it had worked while
+      // terminals happened to spawn in-project). hc ls stays as the
+      // fallback, then the space's folder.
+      let cwd = panes().find(p => p.terminal === focus.address)?.cwd ?? null;
+      if (!cwd) {
+        try {
+          const r = machine ? await exec("hc", ["ls", "--json"], { on: machine }) : await hc(["ls", "--json"]);
+          const t = (JSON.parse(r.stdout ?? "{}").terminals ?? []).find(t => t.address === focus.address);
+          if (t?.cwd) cwd = t.cwd;
+        } catch { /* folder fallback */ }
+      }
+      if (!cwd) cwd = space?.folder ?? null;
       if (!cwd) {
         this.launchNote = "Copy: could not read the session's folder.";
         cx.notify(); return;
