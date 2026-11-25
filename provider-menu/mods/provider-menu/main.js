@@ -5,7 +5,7 @@ import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import { theme, spaces, run, shared, setShared, window, checking, props, openOverlay, closeOverlay, knownAgents, layout, agents, panes, hc, exec } from "herdr";
 import { readProviders, launchArgv, handoffAvailable, machinePlatform, EXTRA, RC, SRC, MCP, MCPONLY, HARNESS, cardNote } from "./providers.js";
-import { MOVE, EXCLUDE, findClaudeSession, findCodexSession, buildManifest, markerManifest, readMarker, writeMarker, targetGate, transferPlan, runTransfer, placeClaudeSession, placeCodexSession, resumeArgs, newId, targetPlatform, excludedPresent, defaultPrompt, verifyCopied, readGitBranch, countDrift, cleanupPacks, slugOf } from "./migrate.js";
+import { MOVE, EXCLUDE, findClaudeSession, findCodexSession, buildManifest, markerManifest, readMarker, writeMarker, targetGate, transferPlan, runTransfer, placeClaudeSession, placeCodexSession, resumeArgs, newId, targetPlatform, excludedPresent, defaultPrompt, verifyCopied, readGitBranch, countDrift, cleanupPacks, slugOf, planWantsPack } from "./migrate.js";
 
 /// shared() key for the last good read of one harness (instant open, re-check).
 const cacheKey = app => "provider-menu." + app;
@@ -25,6 +25,12 @@ const APP_OF = { "claude-code": "claude", codex: "codex" };
 /// Run fn after this render settles (cx.spawn hands the body a fresh cx, so
 /// nothing retains the render's own context beyond its callback).
 const later = (cx, fn) => cx.spawn(async (cx) => { await cx.sleep(0); return fn(cx); });
+
+// One copy at a time across EVERY instance of this mod in the process
+// (a layout can dock the panel twice; each instance has its own this.xfer,
+// so an instance-level guard alone let two owners run the same transfer —
+// measured on the user's rig as two resumed agents).
+let XFER = false;
 
 /// The panel's own place in the shown layout: the block whose content.mod is
 /// this mod and whose role is not "toggle" (the toggle is a separate block).
@@ -691,6 +697,8 @@ export default class ProviderMenu extends View {
   /// transfer's progress callback, and because the task stays alive the
   /// abort path sweeps the pack artifacts off both machines AT ONCE.
   runCopy(cx) {
+    if (XFER) return; // another instance already owns the run
+    XFER = true;
     this.xfer = true;
     this.cancel = false;
     this.xstat = "listing the workspace…";
@@ -709,10 +717,18 @@ export default class ProviderMenu extends View {
         const id = m.id ?? newId();
         const gate = await targetGate(dst, m.target.dir, m.id ? id : null);
         if (!gate.ok) throw new Error(gate.reason);
-        this.xstat = "copying…"; cx.notify();
         const plan = transferPlan(manifest, gate.marker);
+        // The plan's shape names the phase: one tarball (chunks of it) or
+        // file by file — the status must say which, or a chunk count reads
+        // as "still copying one file at a time".
+        const packed = planWantsPack(manifest, plan);
+        this.xstat = packed ? "packing the workspace…" : "copying…"; cx.notify();
         await runTransfer(src, m.root, manifest, dst, m.target.dir, plan,
-          (d, n) => { if (this.cancel) throw new Error("canceled"); this.xstat = "copying " + d + "/" + n; cx.notify(); });
+          (d, n) => {
+            if (this.cancel) throw new Error("canceled");
+            this.xstat = packed ? "sending the pack " + d + "/" + n : "copying file " + d + "/" + n;
+            cx.notify();
+          });
         if (this.cancel) throw new Error("canceled");
         this.xstat = "verifying…"; cx.notify();
         await verifyCopied(dst, m.target.dir, manifest, plan);
@@ -736,6 +752,7 @@ export default class ProviderMenu extends View {
           : { ...m, busy: false, err: "Copy failed: " + msg });
         cx.notify();
       } finally {
+        XFER = false;
         this.xfer = false;
         this.xstat = "";
       }
