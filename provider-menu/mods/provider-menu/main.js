@@ -5,7 +5,7 @@ import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import { theme, spaces, run, shared, setShared, window, checking, props, openOverlay, closeOverlay, knownAgents, layout, agents, panes, hc, exec } from "herdr";
 import { readProviders, launchArgv, handoffAvailable, machinePlatform, EXTRA, RC, SRC, MCP, MCPONLY, HARNESS, cardNote } from "./providers.js";
-import { MOVE, EXCLUDE, findClaudeSession, findCodexSession, buildManifest, markerManifest, readMarker, writeMarker, targetGate, transferPlan, runTransfer, placeClaudeSession, placeCodexSession, resumeArgs, newId, targetPlatform, excludedPresent, defaultPrompt, verifyCopied, readGitBranch, countDrift } from "./migrate.js";
+import { MOVE, EXCLUDE, findClaudeSession, findCodexSession, buildManifest, markerManifest, readMarker, writeMarker, targetGate, transferPlan, runTransfer, placeClaudeSession, placeCodexSession, resumeArgs, newId, targetPlatform, excludedPresent, defaultPrompt, verifyCopied, readGitBranch, countDrift, cleanupPacks, slugOf } from "./migrate.js";
 
 /// shared() key for the last good read of one harness (instant open, re-check).
 const cacheKey = app => "provider-menu." + app;
@@ -256,6 +256,10 @@ export default class ProviderMenu extends View {
             targetPlatform(dstT), excludedPresent(src, m.root),
             readGitBranch(src, m.root), readGitBranch(dstT, m.target.dir),
             countDrift(dstT, m.target.dir, m.target.gate?.marker),
+            // A previous run canceled mid-transfer leaves pack artifacts at
+            // deterministic paths on both machines — this is the first
+            // re-entry point, so sweep them before the dialog even opens.
+            cleanupPacks(src, dstT, slugOf(m.root)),
           ]);
           openOverlay({ mod: "provider-menu", kind: "dialog", width: 560, height: 340,
             props: { mode: "move", provider: p, app, move: { ...m, address: m.address ?? "" },
@@ -705,6 +709,17 @@ export default class ProviderMenu extends View {
           ]));
       })
       .when(m.note, el => el.child(line("move-note", m.note, 2)))
+      // True while the dialog runs AND forever after a mid-run cancel (the
+      // stranded task never clears it): closing the dialog cancels the copy;
+      // pack files on both machines are swept on re-entry. A first copy
+      // interrupted mid-transfer leaves an unmarked target the gate refuses
+      // until emptied; an interrupted UPDATE self-heals — the old marker
+      // still describes the old state, so the retry's delta re-copies the
+      // half-written files. Never suggest emptying a marker'd target.
+      .when(m.busy, el => el.child(div().id("move-busy").pt(2).text_size(12.5).text_color(t.blocked)
+        .child(m.target?.gate?.kind === "fresh"
+          ? "Copy running — closing the dialog cancels it. Pack files are swept on both machines afterwards; a partially copied target must be emptied before a retry."
+          : "Copy running — closing the dialog cancels it. Pack files are swept on both machines afterwards; an interrupted update can simply be retried.")))
       // The refused reason and the promoted line can outrun the 280px panel:
       // min_w(0) lets flex_1 actually bound the text (a flex item's
       // min-content width otherwise stretches it past the edge), the row
@@ -760,6 +775,10 @@ export default class ProviderMenu extends View {
       this.mBusy = true;
       this.mErr = false;
       this.mStat = "listing the workspace…";
+      // The panel shows the in-flight flag: closing this dialog mid-run
+      // strands the whole task (nothing of ours executes after), so this
+      // flag is the only trace a canceled copy leaves in shared state.
+      setShared(MOVE, { ...m, busy: true });
       // Notify NOW: without it the busy state never renders until the first
       // async update, and a slow source manifest leaves the buttons looking
       // alive while every further click dies on the mBusy gate.
@@ -768,6 +787,10 @@ export default class ProviderMenu extends View {
         try {
           const src = m.src === "" ? null : m.src;
           const dst = m.target.machine === "" ? null : m.target.machine;
+          // Second re-entry sweep (the dialog may have been opened before
+          // the strand, so launch() never ran): both ends, deterministic
+          // paths, best effort.
+          await cleanupPacks(src, dst, slugOf(m.root));
           const manifest = await buildManifest(src, m.root);
           const id = m.id ?? newId();
           const gate = await targetGate(dst, m.target.dir, m.id ? id : null);
@@ -794,6 +817,7 @@ export default class ProviderMenu extends View {
           this.mBusy = false;
           this.mErr = true;
           this.mStat = String(e?.message ?? e);
+          setShared(MOVE, { ...m, busy: false });
           cx.notify();
         }
       });

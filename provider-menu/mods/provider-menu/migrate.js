@@ -297,6 +297,34 @@ export function planWantsPack(manifest, plan) {
   return plan.copy.length > PACK_FILES || bytes > PACK_BYTES;
 }
 
+const TMPD = {};
+async function tmpdir(machine) {
+  if (!(machine in TMPD))
+    TMPD[machine] = (await exec("sh", ["-c", 'printf %s "${TMPDIR:-/tmp}"'], { on: machine })).stdout.trim() || "/tmp";
+  return TMPD[machine];
+}
+
+/// The pack artifact's path on one machine: deterministic, keyed by the
+/// source root's slug — stable across runs and recoverable from the staged
+/// state alone (no in-memory id), which is what makes a canceled run's
+/// leftovers findable.
+export async function packPath(machine, key) {
+  return (await tmpdir(machine)) + "/.herdr-pack-" + key;
+}
+
+/// Remove pack artifacts on BOTH ends (best effort, never throws). Called
+/// at the re-entry points after a possible strand — the armed click that
+/// opens the dialog and the start of go() — and by runPacked's own finally
+/// while the run is still alive. Both names are swept on both machines:
+/// which end a machine played is not recoverable after the fact.
+export async function cleanupPacks(srcMachine, dstMachine, key) {
+  for (const m of [srcMachine, dstMachine])
+    try {
+      const dir = await tmpdir(m);
+      await exec("sh", ["-c", 'rm -f "$1" "$2"', "sh", dir + "/.herdr-pack-" + key, dir + "/.herdr-pack-" + key + ".in"], { on: m });
+    } catch { /* best effort */ }
+}
+
 async function packFrom(machine, tmp, root, rels) {
   const batch = 500;
   for (let i = 0; i < rels.length; i += batch) {
@@ -312,9 +340,17 @@ async function packFrom(machine, tmp, root, rels) {
 }
 
 async function runPacked(srcMachine, srcRoot, dstMachine, dstRoot, plan, onProgress) {
-  const mk = 'mktemp "${TMPDIR:-/tmp}/.herdr-pack-XXXXXXXX" 2>/dev/null || mktemp';
-  const srcTmp = (await exec("sh", ["-c", mk], { on: srcMachine })).stdout.trim();
-  const dstTmp = (await exec("sh", ["-c", mk], { on: dstMachine })).stdout.trim();
+  // Deterministic per workspace (the source root's slug), not mktemp-random:
+  // a canceled run strands its whole task — nothing of ours executes after —
+  // so the cleanup at the re-entry points must be able to find the file by
+  // construction, on both machines. tar 'c' on the first batch recreates it,
+  // so reuse across runs is safe. The destination end carries an ".in"
+  // suffix: the same machine can host both ends of a copy (the local→local
+  // test rig), and one shared path would have chunk 0's truncating write
+  // destroy the tar chunks 1+ still have to read (measured).
+  const key = slugOf(srcRoot);
+  const srcTmp = await packPath(srcMachine, key);
+  const dstTmp = await packPath(dstMachine, key + ".in");
   if (!srcTmp || !dstTmp) throw new Error("could not create a pack file");
   try {
     await packFrom(srcMachine, srcTmp, srcRoot, plan.copy);
