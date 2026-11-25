@@ -781,10 +781,17 @@ export default class ProviderMenu extends View {
         .child(div().text_size(12.5).font_semibold()
           .child((m.target?.gate?.kind === "resume" ? "Update" : "Copy") + " " + HARNESS[m.app].title + " session"))
         .child(div().flex_1())
-        .child(h_flex().id("move-cancel").size(16).items_center().justify_center().rounded(5)
-          .text_size(11).text_color(t.dim)
-          .when(!m.busy, el => el.cursor_pointer().hover(s => s.bg(t.selected)))
-          .on_click(() => this.clearMove()).child("✕")))
+        // Clear, not Cancel: the card's two Cancels (the run row, the
+        // dialog) stop a run and KEEP the staging — this is the one control
+        // that drops the whole staged card, so it gets its own word, red
+        // for the warning. Hidden while a transfer runs: the run's Cancel
+        // is then the only live one.
+        .when(!m.busy, el => el
+          .child(h_flex().id("move-cancel").h(18).px(7).items_center().rounded(6)
+            .border_1().border_color(t.blocked)
+            .cursor_pointer().hover(s => s.bg(t.selected))
+            .on_click(() => this.clearMove())
+            .child(div().text_size(11).text_color(t.blocked).child("Clear")))))
       // The staged path is the card's subject — foreground, not dim. The
       // source line carries a selected radio (its own one-item group,
       // locked: the source is fixed until the card is cleared — decorative,
