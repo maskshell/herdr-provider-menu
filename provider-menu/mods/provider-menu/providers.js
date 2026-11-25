@@ -178,8 +178,10 @@ async function rcMode(machine) {
 
 /// The machine's home dir, absolute: home() locally; one exec on a remote,
 /// memoized (paths must not depend on the app process's cwd or the cwd).
+/// Exported for migrate.js: paths built as "$HOME/…" strings do NOT expand
+/// when they travel as argv ($1) — callers need the real absolute form.
 const homeCache = new Map();
-async function machineHome(machine) {
+export async function machineHome(machine) {
   if (!machine) return home();
   if (homeCache.has(machine)) return homeCache.get(machine);
   const r = await exec("sh", ["-c", 'printf %s "$HOME"'], { on: machine });

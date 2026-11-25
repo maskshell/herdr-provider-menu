@@ -3,8 +3,9 @@
 // per-agent submenus; providers.js carries over unchanged.
 import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
-import { theme, spaces, run, shared, setShared, window, checking, props, openOverlay, closeOverlay, knownAgents, layout } from "herdr";
+import { theme, spaces, run, shared, setShared, window, checking, props, openOverlay, closeOverlay, knownAgents, layout, agents, panes, hc, exec } from "herdr";
 import { readProviders, launchArgv, handoffAvailable, machinePlatform, EXTRA, RC, SRC, MCP, MCPONLY, HARNESS, cardNote } from "./providers.js";
+import { MOVE, EXCLUDE, findClaudeSession, findCodexSession, buildManifest, markerManifest, readMarker, writeMarker, targetGate, transferPlan, runTransfer, placeClaudeSession, placeCodexSession, resumeArgs, newId, targetPlatform, excludedPresent, defaultPrompt, verifyCopied, readGitBranch, countDrift } from "./migrate.js";
 
 /// shared() key for the last good read of one harness (instant open, re-check).
 const cacheKey = app => "provider-menu." + app;
@@ -17,6 +18,9 @@ const KNOWN = "new-menu.agents";
 /// shared() key for acknowledged cross-machine launch pairs ("src>dst": true;
 /// the panel asks once per pair before transporting a credential).
 const BORROW = "provider-menu.borrowOk";
+
+/// OSC 7501 app names → our harness keys (the focused-agent check).
+const APP_OF = { "claude-code": "claude", codex: "codex" };
 
 /// Run fn after this render settles (cx.spawn hands the body a fresh cx, so
 /// nothing retains the render's own context beyond its callback).
@@ -106,6 +110,42 @@ export default class ProviderMenu extends View {
       this.handle.focus();
       return;
     }
+    // The move confirmation (T12): the staged session + target + provider
+    // arrive as props (plain JSON); the dialog runs the transfer itself and
+    // stays open while it runs — its context dies with closeOverlay, so
+    // nothing may await after it (the Pass-42 lesson, applied from the
+    // other side: keep the dialog alive until the last await is done).
+    if (props()?.mode === "move") {
+      const p = props() ?? {};
+      this.dialog = true;
+      this.mProvider = p.provider;
+      this.mApp = p.app;
+      this.mMove = p.move;
+      this.mStat = "";
+      this.mErr = false;
+      this.mBusy = false;
+      // The default comes from launch()'s probes (props.prompt): the new
+      // root, the platform, the regenerables left behind — context the
+      // resumed agent can act on, never the herdr machine name.
+      this.mInput = InputState.new({ value: p.prompt ?? "continue — now at " + (p.move?.target?.dir ?? "") });
+      this.handle = cx.focus_handle();
+      this.handle.focus();
+      return;
+    }
+    // The post-move modal (T12 ④): a fork decision the person must make —
+    // the source agent keeps running with the whole conversation in
+    // memory; continuing it there diverges from the moved copy. No Esc
+    // chip and no escape close: one of the two buttons ends it.
+    if (props()?.mode === "moved") {
+      const p = props() ?? {};
+      this.dialog = true;
+      this.dAddress = typeof p.address === "string" ? p.address : "";
+      this.dName = typeof p.name === "string" ? p.name : "";
+      this.dProvider = typeof p.provider === "string" ? p.provider : "";
+      this.handle = cx.focus_handle();
+      this.handle.focus();
+      return;
+    }
     // One stacked section per harness: cached rows render at once, the reads
     // re-check below. A new harness in HARNESS appears here by itself.
     this.sections = Object.fromEntries(Object.keys(HARNESS).map(app => [app, shared(cacheKey(app)) ?? []]));
@@ -114,6 +154,10 @@ export default class ProviderMenu extends View {
     this.agents = shared(KNOWN)?.[""] ?? []; // section icons render at once, re-check below
     this.note = "";
     this.launchNote = "";
+    // An in-flight session move (T12): staged in shared() so it survives
+    // panel restarts — the flow spans space switches and minutes.
+    this.move = shared(MOVE) ?? null;
+    this.movePrompt = null;
     this.wasHidden = null; // tri-state: null until the first render says shown/hidden
     // check runs init for real but exec would warn: read-only, still skip it.
     if (!checking()) {
@@ -126,6 +170,22 @@ export default class ProviderMenu extends View {
         cx.notify();
       });
     }
+    // A tab switch does not re-render a docked mod by itself, and the move
+    // card's "current tab" section must follow the person's tabs live:
+    // watch the shown tab of the active space and ping while a move is
+    // staged and still waiting for its target (T12).
+    cx.spawn(async cx => {
+      let last = undefined;
+      for (;;) {
+        await cx.sleep(300);
+        const space = spaces().find(s => s.active);
+        const tab = space ? (space.tabs.find(t => t.active)?.id ?? null) : null;
+        if (tab !== last) {
+          last = tab;
+          if (this.move && !this.move.target) cx.notify();
+        }
+      }
+    });
   }
 
   saveArgs() {
@@ -172,6 +232,33 @@ export default class ProviderMenu extends View {
   /// Machines without /dev/shm (macOS) fall back to the inline argv — there
   /// the first launch per source>target pair asks (Pass 36).
   launch(p, cx, app) {
+    // T12: an armed move reroutes the provider click — same harness, other
+    // machine, and the confirm dialog runs the transfer.
+    if (this.move?.armed && this.move?.target?.gate?.ok) {
+      const dst = spaces().find(s => s.active)?.machine ?? "";
+      if (app !== this.move.app) {
+        this.launchNote = "Copy: the staged session is " + HARNESS[this.move.app].title + " — pick a " + HARNESS[this.move.app].title + " provider.";
+        cx.notify(); return;
+      }
+      if (dst === this.move.src) {
+        this.launchNote = "Copy: still on the source machine — switch spaces first.";
+        cx.notify(); return;
+      }
+      cx.spawn(async cx => {
+        const m = this.move;
+        const [platform, excluded, srcBranch, dstBranch, drift] = await Promise.all([
+          targetPlatform(dst), excludedPresent(m.src, m.root),
+          readGitBranch(m.src, m.root), readGitBranch(dst, m.target.dir),
+          countDrift(dst, m.target.dir, m.target.gate?.marker),
+        ]);
+        openOverlay({ mod: "provider-menu", kind: "dialog", width: 560, height: 340,
+          props: { mode: "move", provider: p, app, move: { ...m, address: m.address ?? "" },
+            prompt: defaultPrompt(m.target.dir, platform, excluded),
+            drift, srcBranch, dstBranch } });
+        cx.notify();
+      });
+      return;
+    }
     const src = this.src[app] ?? null;
     const dst = spaces().find(s => s.active)?.machine ?? "";
     cx.spawn(async cx => {
@@ -402,6 +489,288 @@ export default class ProviderMenu extends View {
           .on_click(() => closeOverlay(p.overlay)).child("OK")));
   }
 
+  // -------------------------------------------------------------------------
+  // Session move (T12). Flow: stage the focused agent's session → switch to
+  // a space on another machine, list its shells, pick one's cwd as the
+  // target (gate: empty, or our lineage marker) → arm with the checkbox →
+  // a provider click moves workspace + session and resumes under that
+  // identity. The staging card docks to the panel bottom; only the provider
+  // list scrolls (the layout rule for this feature).
+
+  /// "prepare to move the active session": refresh to the current machine,
+  /// find the focused agent terminal, resolve its cwd, find its session,
+  /// stage it. Honest sentences for every way this can come up empty.
+  startMove(cx) {
+    this.launchNote = "";
+    this.refresh(cx);
+    cx.spawn(async cx => {
+      let focus = null;
+      try { focus = (await agents()).find(a => a.focused) ?? null; } catch { focus = null; }
+      const app = focus ? APP_OF[focus.app] : null;
+      if (!app) {
+        this.launchNote = "Copy: the focused terminal is not a Claude Code or Codex session.";
+        cx.notify(); return;
+      }
+      const space = spaces().find(s => s.id === focus.space);
+      const machine = space?.machine ?? null;
+      // The session's folder: the core that runs it lists the terminal's
+      // cwd; the space's folder is the fallback (a remote core that cannot
+      // be queried still stages, with the folder it starts terminals in).
+      let cwd = space?.folder ?? null;
+      try {
+        const r = machine ? await exec("hc", ["ls", "--json"], { on: machine }) : await hc(["ls", "--json"]);
+        const t = (JSON.parse(r.stdout ?? "{}").terminals ?? []).find(t => t.address === focus.address);
+        if (t?.cwd) cwd = t.cwd;
+      } catch { /* folder fallback */ }
+      if (!cwd) {
+        this.launchNote = "Copy: could not read the session's folder.";
+        cx.notify(); return;
+      }
+      const session = app === "codex" ? await findCodexSession(machine, cwd) : await findClaudeSession(machine, cwd);
+      if (!session) {
+        this.launchNote = "Copy: no " + (app === "codex" ? "codex rollout" : "claude session") + " under " + cwd + ".";
+        cx.notify(); return;
+      }
+      const marker = await readMarker(machine, cwd);
+      this.move = { src: machine ?? "", app, root: cwd, session, id: marker?.id ?? null, address: focus.address ?? "", target: null, armed: false, note: "" };
+      this.movePrompt = null;
+      setShared(MOVE, this.move);
+      cx.notify();
+    });
+  }
+
+  /// Every live shell on the machine of the active space (the target
+  /// candidates the "list shells" chip offers). panes() walks EVERY pane
+  /// of EVERY tab of EVERY space — machines included — so it must be
+  /// scoped by machine: the tabs of every space of THAT machine, or the
+  /// source machine's shells leak into the list (measured on the rig:
+  /// they did). A pane's cwd is where its shell really is now (hc ls's
+  /// cwd is the spawn folder, so a shell that cd'd since would list the
+  /// wrong directory). Panes running an agent (status reported) never
+  /// qualify.
+  shellTargets(cx) {
+    const cur = spaces().find(s => s.active)?.machine ?? "";
+    const curName = cur === "" ? "this machine" : cur;
+    if (cur === this.move.src) {
+      this.move = { ...this.move, shells: null, note: "this is the source machine — switch to a space on another machine" };
+      setShared(MOVE, this.move); cx.notify(); return;
+    }
+    const tabs = new Set(spaces()
+      .filter(s => (s.machine ?? "") === cur)
+      .flatMap(s => s.tabs.map(t => t.id)));
+    const shells = [...new Set(panes()
+      .filter(p => p.terminal && p.cwd && !p.status && tabs.has(p.tab))
+      .map(p => String(p.cwd)))];
+    this.move = { ...this.move, shells, note: shells.length ? "" : "no shells on " + curName + " — open one and cd to a directory" };
+    setShared(MOVE, this.move);
+    cx.notify();
+  }
+
+  /// One clickable shell row: "› <cwd>", long paths truncated from the left.
+  shellRow(id, dir) {
+    const t = theme();
+    return h_flex().id(id).pt(2).px(3).h(20).items_center().rounded(6)
+      .cursor_pointer().hover(s => s.bg(t.selected))
+      .on_click((_e, cx) => this.pickTarget(cx, dir))
+      .child(div().text_size(10.5).child("› " + (dir.length > 40 ? "…" + dir.slice(-39) : dir)));
+  }
+
+  /// Pick one shell's cwd as the target: the gate runs now (empty, lineage
+  /// marker, or refused with the reason).
+  pickTarget(cx, dir) {
+    cx.spawn(async cx => {
+      const machine = spaces().find(s => s.active)?.machine ?? null;
+      if ((machine ?? "") === this.move.src) {
+        this.move = { ...this.move, target: null, note: "this is the source machine — switch to another machine's space" };
+        setShared(MOVE, this.move); cx.notify(); return;
+      }
+      const gate = await targetGate(machine, dir, this.move.id);
+      this.move = { ...this.move, target: { machine: machine ?? "", dir, gate }, note: "" };
+      setShared(MOVE, this.move);
+      cx.notify();
+    });
+  }
+
+  clearMove() {
+    this.move = null;
+    this.movePrompt = null;
+    setShared(MOVE, null);
+  }
+
+  /// The docked staging card: session line, target lines (or the shell
+  /// list), the arming checkbox and the prompt once a target passed the
+  /// gate. Kept compact — it docks, the provider list scrolls (T12's rule).
+  moveCard() {
+    const t = theme();
+    const m = this.move;
+    if (!m) return null;
+    const cur = spaces().find(s => s.active)?.machine ?? "";
+    const srcName = m.src === "" ? "this machine" : m.src;
+    const line = (id, text, pt) => div().id(id).pt(pt).text_size(10.5).text_color(t.dim).child(text);
+    return v_flex().id("move-card").flex_none().mt(2).px(6).py(6).gap(2).rounded(6).bg(t.raised)
+      .child(h_flex().items_center().gap(6)
+        .child(div().text_size(10.5).font_semibold().child("copy " + HARNESS[m.app].title.toLowerCase() + " session"))
+        .child(div().flex_1())
+        .child(h_flex().id("move-cancel").size(16).items_center().justify_center().rounded(5)
+          .text_size(10).text_color(t.dim).cursor_pointer().hover(s => s.bg(t.selected))
+          .on_click(() => this.clearMove()).child("✕")))
+      .child(line("move-src", "from " + srcName + " · " + m.root, 2))
+      .when(!m.target && cur === m.src, el => el.child(line("move-hint-src",
+        "switch to a space on another machine, open a shell there, cd to an empty directory", 2)))
+      .when(!m.target && cur !== m.src, el => {
+        // The current tab leads: its shells are what the person is looking
+        // at right now, so they show without a click (init's watcher pings
+        // on tab switches — a docked mod is not re-rendered by the switch
+        // itself). The "list shells" chip below is the wider choice: every
+        // shell on this machine, not just this tab.
+        const tabId = spaces().find(s => s.active)?.tabs.find(t => t.active)?.id ?? null;
+        const now = tabId === null ? [] : [...new Set(panes()
+          .filter(p => p.terminal && p.cwd && !p.status && p.tab === tabId)
+          .map(p => String(p.cwd)))];
+        const nowSet = new Set(now);
+        return el
+          .when(now.length, e => e.children([
+            line("move-cur", "current tab", 2),
+            ...now.map((dir, i) => this.shellRow("move-cur-" + i, dir)),
+          ]))
+          .when(!m.shells, e => e.child(h_flex().id("move-list").pt(2).px(7).h(18).items_center().rounded(6)
+            .border_1().border_color(t.input).cursor_pointer().hover(s => s.bg(t.selected))
+            .on_click((_e, cx) => this.shellTargets(cx))
+            .child(div().text_size(10).child("list shells on " + (cur === "" ? "this machine" : cur)))))
+          .when(m.shells, e => e.children([
+            line("move-shells-label", "shells on " + (cur === "" ? "this machine" : cur), 2),
+            ...m.shells.filter(d => !nowSet.has(d)).slice(0, 4).map((dir, i) => this.shellRow("move-shell-" + i, dir)),
+            h_flex().pt(1).child(h_flex().id("move-relist").px(6).h(16).items_center().rounded(5)
+              .text_size(9.5).text_color(t.dim).cursor_pointer().hover(s => s.bg(t.selected))
+              .on_click((_e, cx) => this.shellTargets(cx)).child("refresh")),
+          ]));
+      })
+      .when(m.note, el => el.child(line("move-note", m.note, 2)))
+      .when(m.target && !m.target.gate.ok, el => el.child(line("move-refused", m.target.dir + " — " + m.target.gate.reason + ". Pick another.", 2)))
+      .when(m.target && m.target.gate.ok, el => el
+        .child(line("move-target", "to " + (m.target.machine === "" ? "this machine" : m.target.machine) + " · " + m.target.dir + " (" + (m.target.gate.kind === "fresh" ? "first copy" : "update") + ")", 2))
+        .child(h_flex().id("move-arm").pt(3).px(3).h(20).items_center().gap(5).rounded(6)
+          .cursor_pointer().hover(s => s.bg(t.selected))
+          .on_click((_e, cx) => { this.move = { ...this.move, armed: !this.move.armed }; setShared(MOVE, this.move); cx.notify(); })
+          .child(h_flex().size(13).flex_none().rounded(3).items_center().justify_center()
+            .when(m.armed, s => s.bg(t.accent))
+            .when(!m.armed, s => s.border_1().border_color(t.input))
+            .when(m.armed, s => s.child(div().text_size(9.5).text_color(t.surface).child("✓"))))
+          .child(div().text_size(10.5).text_color(m.armed ? t.foreground : t.dim).child("copy the session and workspace above")))
+        .when(m.armed, e2 => e2.child(line("move-pick", "pick a " + HARNESS[m.app].title + " provider above to copy and resume", 2))));
+  }
+
+  /// The move confirmation + transfer progress (T12). Runs the whole move:
+  /// manifest → gate → transfer (both ends stamped) → session placed → the
+  /// resumed launch under the picked identity → the fork modal. The dialog
+  /// STAYS OPEN through the transfer (context lifetime); the launch happens
+  /// after closeOverlay with no await in between.
+  moveDialog() {
+    const t = theme();
+    const p = props() ?? {};
+    const m = this.mMove ?? {};
+    const go = cx => {
+      if (this.mBusy) return;
+      this.mBusy = true;
+      this.mErr = false;
+      this.mStat = "listing the workspace…";
+      cx.spawn(async cx => {
+        try {
+          const src = m.src === "" ? null : m.src;
+          const dst = m.target.machine === "" ? null : m.target.machine;
+          const manifest = await buildManifest(src, m.root);
+          const id = m.id ?? newId();
+          const gate = await targetGate(dst, m.target.dir, m.id ? id : null);
+          if (!gate.ok) throw new Error(gate.reason);
+          this.mStat = "copying…"; cx.notify();
+          const plan = transferPlan(manifest, gate.marker);
+          await runTransfer(src, m.root, manifest, dst, m.target.dir, plan,
+            (d, n) => { this.mStat = "copying " + d + "/" + n; cx.notify(); });
+          this.mStat = "verifying…"; cx.notify();
+          await verifyCopied(dst, m.target.dir, manifest, plan);
+          await writeMarker(src, m.root, { v: 1, id, at: Date.now(), manifest: markerManifest(manifest) });
+          await writeMarker(dst, m.target.dir, { v: 1, id, at: Date.now(), manifest: markerManifest(manifest) });
+          this.mStat = "placing the session…"; cx.notify();
+          if (m.app === "codex") await placeCodexSession(src, m.session, dst, m.target.dir);
+          else await placeClaudeSession(src, m.session, dst, m.target.dir);
+          const space = spaces().find(s => s.active);
+          const prompt = (this.mInput ? this.mInput.value() : "").trim() || "continue";
+          const argv = await launchArgv(this.mProvider, resumeArgs(m.app, m.session.uuid ?? m.session.id, prompt), dst, m.app, src);
+          closeOverlay(p.overlay);
+          run("tab.new", { name: HARNESS[m.app].title + " (" + this.mProvider.name + ")", space: space?.id, argv });
+          setShared(MOVE, null);
+          openOverlay({ mod: "provider-menu", kind: "dialog", width: 520, height: 250, props: { mode: "moved", address: m.address ?? "", name: m.src === "" ? "this machine" : m.src, provider: this.mProvider.name } });
+        } catch (e) {
+          this.mBusy = false;
+          this.mErr = true;
+          this.mStat = String(e?.message ?? e);
+          cx.notify();
+        }
+      });
+    };
+    const btn = (id, label, solid, act) => h_flex().id(id).h(30).px(12).items_center().rounded(8)
+      .border_1().border_color(solid ? t.solid : t.input)
+      .when(solid, el => el.bg(t.solid).text_color(t.solid_foreground))
+      .cursor_pointer().hover(s => s.bg(solid ? t.solid : t.raised))
+      .on_click((_e, cx) => act(cx)).child(label);
+    const line = (text, pt) => div().pt(pt).text_size(11.5).text_color(t.dim).child(text);
+    return v_flex().id("move-dialog").track_focus(this.handle)
+      .on_key_down((e, cx) => { if (e.key === "escape" && !this.mBusy) { closeOverlay(p.overlay); cx.stop_propagation(); } })
+      .w_full().min_h(0).p(18).gap(2).bg(t.popover).text_color(t.foreground)
+      .child(h_flex().items_center()
+        .child(div().flex_1().text_size(15).font_semibold().child("Copy session"))
+        .when(!this.mBusy, el => el.child(this.escChip(p))))
+      .child(div().pt(8).text_size(12.3)
+        .child((this.mProvider?.name ?? "This provider") + " resumes the staged " + HARNESS[m.app]?.title + " session on " + (m.target?.machine === "" ? "this machine" : m.target?.machine) + "."))
+      .child(line("Workspace " + m.root + " copies to " + m.target?.dir + " — every file, including any .env or credentials it holds. The transcript lands in that machine's home.", 8))
+      .child(line("Regenerables stay behind and are reinstalled there: " + EXCLUDE.slice(0, 6).join(", ") + ", …", 8))
+      .when(p.drift > 0, el => el.child(line("The target drifted since the last copy: " + p.drift + " file" + (p.drift === 1 ? "" : "s") + " differ"
+        + (p.srcBranch && p.dstBranch && p.srcBranch !== p.dstBranch
+          ? " (source on " + p.srcBranch + ", target on " + p.dstBranch + ")" : "")
+        + " — copying overwrites the target's versions.", 8)))
+      .when(!this.mBusy && this.mInput, el => el.child(div().pt(10)
+        .child(Input.new(this.mInput).h(32).px(10).rounded(9).border_1().border_color(t.input).bg(t.background).text_size(12))))
+      .when(!this.mBusy && this.mInput, el => el.child(line("First message to the resumed session — its history mentions the old machine, a note helps.", 4)))
+      .when(this.mStat, el => el.child(div().pt(10).text_size(11.5)
+        .text_color(this.mErr ? t.destructive : t.dim).child(this.mStat)))
+      .child(h_flex().pt(16).gap(8).justify_end()
+        .when(!this.mBusy, el => el
+          .child(btn("md-cancel", "Cancel", false, cx => closeOverlay(p.overlay)))
+          .child(btn("md-go", "Copy", true, go))));
+  }
+
+  /// The fork decision (T12 ④): the source agent still holds the whole
+  /// conversation. Keeping it risks divergence; stopping it ends it. The
+  /// two buttons are the honest choices; Esc lands on the conservative one
+  /// (keep) — see the note at the render below.
+  movedDialog() {
+    const t = theme();
+    const p = props() ?? {};
+    const done = () => { closeOverlay(p.overlay); };
+    const btn = (id, label, solid, act) => h_flex().id(id).h(30).px(12).items_center().rounded(8)
+      .border_1().border_color(solid ? t.solid : t.input)
+      .when(solid, el => el.bg(t.solid).text_color(t.solid_foreground))
+      .cursor_pointer().hover(s => s.bg(solid ? t.solid : t.raised))
+      .on_click((_e, _cx) => act()).child(label);
+    // Esc: the app's built-in Overlay binding closes any dialog before a
+    // mod's key handler can see the key (measured in the sandbox: the
+    // handler never fires). The fork modal therefore accepts Esc as an
+    // implicit "Keep it (may diverge)" — the conservative choice: stopping
+    // the source agent is the destructive one. Upstream ask: an overlay
+    // option that makes a required-choice dialog undismissable.
+    return v_flex().id("moved-dialog").track_focus(this.handle)
+      .w_full().min_h(0).p(18).gap(2).bg(t.popover).text_color(t.foreground)
+      .child(h_flex().items_center()
+        .child(div().flex_1().text_size(15).font_semibold().child("Session copied")))
+      .child(div().pt(8).text_size(12.3)
+        .child("The session now runs on its new machine under " + this.dProvider + "."))
+      .child(div().pt(8).text_size(12.3)
+        .child("The source agent on " + this.dName + " is still live with the same conversation. Continuing it there will diverge from the new copy."))
+      .child(h_flex().pt(16).gap(8).justify_end()
+        .child(btn("dd-stop", "Stop the source agent", true, () => { if (this.dAddress) run("terminal.kill", { terminal: this.dAddress }); done(); }))
+        .child(btn("dd-keep", "Keep it (may diverge)", false, done)));
+  }
+
   argsDialog() {
     const t = theme();
     const p = props() ?? {};
@@ -508,6 +877,20 @@ export default class ProviderMenu extends View {
           .on_click(() => closeOverlay(p.overlay)).child("OK")));
   }
 
+  /// The stage button row (T12): one click stages the focused session.
+  /// Always available — restaging just picks the session now in focus.
+  moveRow() {
+    const t = theme();
+    return h_flex().id("moverow").h(26).px(6).gap(8).items_center().rounded(6)
+      .hover(s => s.bg(t.raised)).cursor_pointer()
+      .on_click((_e, cx) => this.startMove(cx))
+      .child(div().text_size(10.5).text_color(t.dim).child("copy session"))
+      .child(div().flex_1())
+      .child(h_flex().id("move-stage").h(18).px(7).items_center().rounded(6)
+        .border_1().border_color(t.input).bg(t.raised)
+        .child(div().text_size(10).child("stage ›")));
+  }
+
   /// The tab-bar toggle pill: one click shows or hides the docked panel. The
   /// layout node's own hidden flag is the state — the same node the panel's
   /// close button hides — so the two controls always agree and open/closed
@@ -542,6 +925,8 @@ export default class ProviderMenu extends View {
     if (this.dialog) return props()?.mode === "windows" ? this.windowsDialog()
       : props()?.mode === "borrow" ? this.borrowDialog()
       : props()?.mode === "mcp" ? this.mcpDialog()
+      : props()?.mode === "move" ? this.moveDialog()
+      : props()?.mode === "moved" ? this.movedDialog()
       : this.argsDialog();
     const t = theme();
     const unix = window()?.platform !== "windows";
@@ -556,6 +941,10 @@ export default class ProviderMenu extends View {
     const shownNow = Boolean(target && !target.hidden);
     if (shownNow && this.wasHidden === true && !checking()) later(cx, cx2 => this.refresh(cx2));
     this.wasHidden = !shownNow;
+    // The copy dialog is another mod instance: when it clears the staged
+    // move via setShared, only a re-read here retires this panel's card —
+    // init alone would leave it armed on screen until a restart.
+    this.move = shared(MOVE);
     return v_flex().id("provider-menu").size_full().bg(t.surface).p(6).gap(2).text_size(12.5)
       .child(h_flex().id("header").px(6).py(4).gap(6).items_center()
         .child(div().font_semibold().child("Providers"))
@@ -572,12 +961,17 @@ export default class ProviderMenu extends View {
       .child(this.rcRow())
       .child(this.mcpRow())
       .child(this.foldRow())
-      .when(!unix, el => el.child(div().px(6).py(8).text_color(t.dim)
+      .when(!unix, el => el.child(div().flex_1().px(6).py(8).text_color(t.dim)
         .child("Windows lands in Phase 2 (test T3).")))
-      .when(unix && this.note, el => el.child(div().px(6).py(8).text_color(t.dim).child(this.hint())))
+      .when(unix && this.note, el => el.child(div().flex_1().px(6).py(8).text_color(t.dim).child(this.hint())))
       .when(unix && !this.note, el => el.child(v_flex().id("list").flex_1().min_h(0).overflow_y_scrollbar()
         .children(Object.keys(HARNESS).map(app => this.section(app)))))
       .when(this.launchNote, el => el.child(div().px(6).py(6).text_color(t.dim)
-        .child("Launch failed: " + this.launchNote)));
+        .child("Launch failed: " + this.launchNote)))
+      // The move entry rides the panel's bottom edge — it has nothing to do
+      // with the args/rc/mcp rows above. A staged move's card docks below
+      // it at the very bottom, pushing the row up when it appears.
+      .child(this.moveRow())
+      .when(this.move, el => el.child(this.moveCard()));
   }
 }
