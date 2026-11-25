@@ -331,15 +331,42 @@ async function packFrom(machine, tmp, root, rels) {
     // $@ spans every positional arg, $1/$2 included — lift them out first
     // or tar packs the pack file and the root by full path (measured: it
     // did; the same trap as excludedPresent's loop).
+    // COPYFILE_DISABLE: a macOS source's bsdtar smuggles extended
+    // attributes into the tarball as AppleDouble ._* members, which GNU
+    // tar on the target materializes as real files the manifest never
+    // knew (they then pollute the next drift count). GNU tar ignores the
+    // variable — tool-try, not platform-naming.
     const r = await exec("sh", ["-c",
-      'p1=$1; p2=$2; shift 2; tar ' + (i === 0 ? "c" : "r") + 'f "$p1" -C "$p2" "$@" && echo ok',
+      'p1=$1; p2=$2; shift 2; COPYFILE_DISABLE=1 tar ' + (i === 0 ? "c" : "r") + 'f "$p1" -C "$p2" "$@" && echo ok',
       "sh", tmp, root, ...rels.slice(i, i + batch)], { on: machine });
     if (r.code !== 0 || r.stdout.trim() !== "ok")
       throw new Error("could not pack the workspace (" + (r.stderr || "exit " + r.code) + ")");
   }
 }
 
-async function runPacked(srcMachine, srcRoot, dstMachine, dstRoot, plan, onProgress) {
+/// Remove AppleDouble droppings a macOS source's tar may have left:
+/// ._X goes only when X is in this manifest and ._X itself is not — a
+/// source file genuinely named ._X (SMB/exFAT carry-overs) is real data
+/// and stays. Best effort, never throws.
+async function sweepAppleDouble(machine, root, manifest) {
+  try {
+    const list = await exec("sh", ["-c",
+      'find "$1" -name "._*" -type f | sed "s|^$1/||"', "sh", root], { on: machine });
+    // The prefix lives on the BASENAME (droppings nest: d/._f0), and the
+    // pair key keeps its directory: d/._f0 pairs with d/f0.
+    const bad = list.stdout.split("\n").filter(rel => {
+      const cut = rel.lastIndexOf("/") + 1;
+      const base = rel.slice(cut);
+      return base.startsWith("._") && base.length > 2
+        && manifest.files[rel.slice(0, cut) + base.slice(2)] !== undefined
+        && manifest.files[rel] === undefined;
+    });
+    for (let i = 0; i < bad.length; i += 500)
+      await exec("sh", ["-c", 'cd "$1" && shift && rm -f -- "$@"', "sh", root, ...bad.slice(i, i + 500)], { on: machine });
+  } catch { /* best effort */ }
+}
+
+async function runPacked(srcMachine, srcRoot, dstMachine, dstRoot, plan, onProgress, manifest) {
   // Deterministic per workspace (the source root's slug), not mktemp-random:
   // a canceled run strands its whole task — nothing of ours executes after —
   // so the cleanup at the re-entry points must be able to find the file by
@@ -376,6 +403,7 @@ async function runPacked(srcMachine, srcRoot, dstMachine, dstRoot, plan, onProgr
     const x = await exec("sh", ["-c", 'tar xf "$1" -C "$2" && echo ok', "sh", dstTmp, dstRoot], { on: dstMachine });
     if (x.code !== 0 || x.stdout.trim() !== "ok")
       throw new Error("could not unpack on the target (" + (x.stderr || "exit " + x.code) + ")");
+    await sweepAppleDouble(dstMachine, dstRoot, manifest);
     return plan.copy.length;
   } finally {
     for (const [m, p] of [[srcMachine, srcTmp], [dstMachine, dstTmp]])
@@ -389,7 +417,7 @@ async function runPacked(srcMachine, srcRoot, dstMachine, dstRoot, plan, onProgr
 export async function runTransfer(srcMachine, srcRoot, manifest, dstMachine, dstRoot, plan, onProgress) {
   let done = 0;
   if (plan.copy.length && planWantsPack(manifest, plan)) {
-    done = await runPacked(srcMachine, srcRoot, dstMachine, dstRoot, plan, onProgress);
+    done = await runPacked(srcMachine, srcRoot, dstMachine, dstRoot, plan, onProgress, manifest);
   } else {
     for (const rel of plan.copy) {
       const b64 = await readB64(srcMachine, srcRoot + "/" + rel);
