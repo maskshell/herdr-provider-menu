@@ -1,0 +1,170 @@
+{
+  "claims": [
+    {
+      "text": "codex reads the model_catalog_json file during config loading, once at startup; the ConfigToml doc comment states 'applied on startup only'.",
+      "source_refs": [
+        "S1",
+        "S2"
+      ]
+    },
+    {
+      "text": "The read is a single fs::read_to_string of the whole file followed by one parse; no incremental read, retry, or content caching.",
+      "source_refs": [
+        "S1"
+      ]
+    },
+    {
+      "text": "No file locking exists in the catalog load path; the models-manager's disk cache (models_cache.json, 300s TTL) concerns only the remote server catalog.",
+      "source_refs": [
+        "S1",
+        "S3"
+      ]
+    },
+    {
+      "text": "When set, the parsed catalog replaces the bundled one for the process; when absent, the compile-time embedded bundled catalog is used.",
+      "source_refs": [
+        "S1",
+        "S2",
+        "S3",
+        "S4"
+      ]
+    },
+    {
+      "text": "Nothing downstream re-reads the file: Config carries the parsed value, no path retained.",
+      "source_refs": [
+        "S1",
+        "S5",
+        "S6"
+      ]
+    },
+    {
+      "text": "A nonexistent model_catalog_json path is a hard error: io::Error propagates through config loading; no exists-check, no fallback.",
+      "source_refs": [
+        "S1"
+      ]
+    },
+    {
+      "text": "Invalid content is a hard error with dedicated messages; empty catalogs error likewise.",
+      "source_refs": [
+        "S1"
+      ]
+    },
+    {
+      "text": "Empirically codex-cli 0.148.0-alpha.9 aborts before any model request on an incompatible catalog (openai/codex#38934).",
+      "source_refs": [
+        "S7"
+      ]
+    },
+    {
+      "text": "Catalog schema is version-coupled and unversioned: the required supports_parallel_tool_calls field was removed on main; a catalog valid for one release can fail on another.",
+      "source_refs": [
+        "S7"
+      ]
+    },
+    {
+      "text": "cc-switch#6661 reports the same class: Codex desktop 0.148.0 rejects a catalog whose entries lack supportsParallelToolCalls.",
+      "source_refs": [
+        "S8"
+      ]
+    },
+    {
+      "text": "The debug models subcommand exercises the same startup catalog load path (the parse error in #38934 surfaces from it).",
+      "source_refs": [
+        "S9",
+        "S7"
+      ]
+    },
+    {
+      "text": "herdr's mod exec spawns directly (no shell, no env fixup): local commands inherit the app process's environment; a desktop-launched app carries a narrow PATH.",
+      "source_refs": [
+        "S10"
+      ]
+    },
+    {
+      "text": "Remote-machine exec rides hc and therefore the target core's environment.",
+      "source_refs": [
+        "S11"
+      ]
+    },
+    {
+      "text": "RC-mode launches resolve commands through bash -lic (login shell), so probe/launch environment parity requires the probe to mirror the launch form.",
+      "source_refs": [
+        "S12"
+      ]
+    }
+  ],
+  "sources": [
+    {
+      "source_id": "S1",
+      "ref": "https://raw.githubusercontent.com/openai/codex/main/codex-rs/core/src/config/mod.rs (load_catalog_json, load_model_catalog, call site; read in three offset passes)",
+      "provenance": "fetched-upstream",
+      "fetched": true
+    },
+    {
+      "source_id": "S2",
+      "ref": "https://raw.githubusercontent.com/openai/codex/main/codex-rs/config/src/config_toml.rs (ConfigToml.model_catalog_json doc: 'applied on startup only')",
+      "provenance": "fetched-upstream",
+      "fetched": true
+    },
+    {
+      "source_id": "S3",
+      "ref": "https://raw.githubusercontent.com/openai/codex/main/codex-rs/models-manager/src/manager.rs (BUNDLED_MODELS LazyLock; models_cache.json TTL 300s; no flock/fs2/lockfile)",
+      "provenance": "fetched-upstream",
+      "fetched": true
+    },
+    {
+      "source_id": "S4",
+      "ref": "https://raw.githubusercontent.com/openai/codex/main/codex-rs/models-manager/src/lib.rs (include_str bundled models.json)",
+      "provenance": "fetched-upstream",
+      "fetched": true
+    },
+    {
+      "source_id": "S5",
+      "ref": "https://raw.githubusercontent.com/openai/codex/main/codex-rs/models-manager/src/config.rs (ModelsManagerConfig.model_catalog: parsed value)",
+      "provenance": "fetched-upstream",
+      "fetched": true
+    },
+    {
+      "source_id": "S6",
+      "ref": "https://raw.githubusercontent.com/openai/codex/main/codex-rs/models-manager/src/catalog.rs (no fs reads)",
+      "provenance": "fetched-upstream",
+      "fetched": true
+    },
+    {
+      "source_id": "S7",
+      "ref": "https://api.github.com/repos/openai/codex/issues/38934",
+      "provenance": "issue-tracker",
+      "fetched": true
+    },
+    {
+      "source_id": "S8",
+      "ref": "https://api.github.com/repos/farion1231/cc-switch/issues/6661",
+      "provenance": "issue-tracker",
+      "fetched": true
+    },
+    {
+      "source_id": "S9",
+      "ref": "https://raw.githubusercontent.com/openai/codex/main/codex-rs/cli/src/lib.rs",
+      "provenance": "fetched-upstream",
+      "fetched": true
+    },
+    {
+      "source_id": "S10",
+      "ref": "herdr-app src/mods.rs:991-1010 (exec_future) + src/mods.rs:884 (run_blocking) + src/spawn.rs:7-16 (command: plain Command::new, no env/shell) — local exec inherits the app-process environment",
+      "provenance": "codebase-local",
+      "fetched": true
+    },
+    {
+      "source_id": "S11",
+      "ref": "herdr-app src/mods.rs:929 (run_remote_with_limit: remote exec rides hc, i.e. the target core's environment)",
+      "provenance": "codebase-local",
+      "fetched": true
+    },
+    {
+      "source_id": "S12",
+      "ref": "herdr-provider-menu provider-menu/mods/provider-menu/providers.js:172-175 (rc-mode launch resolves via bash -lic — a login-shell environment, divergent from the probe's exec env unless mirrored)",
+      "provenance": "codebase-local",
+      "fetched": true
+    }
+  ]
+}

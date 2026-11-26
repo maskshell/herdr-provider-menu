@@ -35,6 +35,7 @@ Two mods in this package, both clones of shipped mods:
 - Digits cover only the first nine cards; more cards still click.
 - The read goes through the active space's machine: a remote space without `sqlite3` or a cc-switch database shows the failure rows, not this machine's cards.
 - Cards come from cc-switch's database only. To add one, add it in cc-switch and reopen the submenu.
+- Codex cards on a machine whose live config keeps a `model_catalog_json` pointer launch without switching cc-switch: the shared providers.js stages a single-model catalog under `$TMPDIR` before the tab spawns and points `-c model_catalog_json` at it (the current provider skips the checks outright — the file is its own state, same as cc-switch's own terminal; a selected profile still refuses).
 
 ## Done when
 
