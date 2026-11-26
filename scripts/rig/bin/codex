@@ -1,0 +1,11 @@
+#!/bin/sh
+# Rig stub for `codex debug models --bundled`: a fixed bundled catalog with a
+# nested-slug pair (gpt-5 ⊂ gpt-5-codex), so the rig is hermetic — it never
+# depends on, or varies with, a real codex on the host — and the
+# longest-prefix lookup has a real pair to resolve.
+cat <<'CAT'
+{"models":[
+ {"slug":"gpt-5","display_name":"GPT-5","visibility":"visible","context_window":272000,"max_context_window":272000,"base_instructions":"preamble gpt-5"},
+ {"slug":"gpt-5-codex","display_name":"GPT-5 Codex","visibility":"hidden","context_window":400000,"max_context_window":400000,"base_instructions":"preamble gpt-5-codex"}
+]}
+CAT
