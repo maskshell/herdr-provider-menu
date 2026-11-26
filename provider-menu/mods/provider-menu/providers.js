@@ -375,7 +375,11 @@ const CODEX_RESERVED = ["openai", "ollama", "lmstudio"];
 /// switch writes (and therefore the keys a previous provider may leave behind).
 const CODEX_FLOOR_TOP = ["model_provider", "openai_base_url", "model", "review_model", "model_reasoning_effort", "plan_mode_reasoning_effort", "disable_response_storage", "model_catalog_json", "experimental_bearer_token", "base_url", "wire_api"];
 const CODEX_FLOOR_NESTED = [["agents", "default_subagent_model"], ["agents", "default_subagent_reasoning_effort"], ["memories", "extract_model"], ["memories", "consolidation_model"]];
-const CODEX_EXCLUSIVE_TOP = ["web_search", "model_context_window", "model_auto_compact_token_limit", "model_supports_reasoning_summaries", "model_verbosity"];
+const CODEX_EXCLUSIVE_TOP = ["web_search", "model_context_window", "model_auto_compact_token_limit", "model_supports_reasoning_summaries", "model_verbosity",
+  // The row's own catalog pointer rides the overrides verbatim (Pi review):
+  // same-machine it is honored as this provider's -c value (the spec's
+  // "同机行内指针照旧通过"); cross-machine launch() refuses before we get here.
+  "model_catalog_json"];
 /// Live route-table keys that are client behavior, not credentials: leaving
 /// them behind is harmless (upstream PROXY_KEPT_CLIENT_KEYS).
 const CODEX_KEPT = ["request_max_retries", "stream_max_retries", "stream_idle_timeout_ms"];
@@ -470,6 +474,256 @@ function classifyCodex(settings, meta, category) {
   return { launchable: true, reason: "", toml, table, key: key || bearer };
 }
 
+// ---------------------------------------------------------------------------
+// codex model-catalog synthesis (docs/arch-codex-catalog-synthesis.md).
+// When the launch machine's live config.toml keeps a model_catalog_json
+// pointer and the provider row sets no key of its own, codex would accept only
+// the models that foreign catalog lists (upstream reads it ONCE at startup,
+// unlocked, no fallback — a torn or missing file is a hard abort). Instead of
+// refusing the launch, we synthesize a single-model catalog for the pinned
+// model: an official name mirrors the machine's own `codex debug models
+// --bundled` entry (the same binary that will parse it) with cc-switch's
+// forced third-party mutations applied; anything else gets the neutral
+// vendored entry. The coupling is to codex, not to cc-switch's tuning.
+
+/// Vendored from cc-switch's codex_native_responses_template.json (MIT,
+/// Copyright (c) 2025 Jason Young, github.com/farion1231/cc-switch): the
+/// neutral third-party entry. Native /responses gateways reject `custom`
+/// tools, so edits flow through shell_type="shell_command" with no freeform
+/// apply_patch; reasoning keeps the conservative none/high pair.
+const CODEX_NEUTRAL_CATALOG_ENTRY = {
+  "slug": "native-responses-template",
+  "display_name": "native-responses-template",
+  "description": "native-responses-template",
+  "base_instructions": "You are Codex, a coding agent. You and the user share the same workspace and collaborate to achieve the user's goals.",
+  "default_reasoning_level": "high",
+  "supported_reasoning_levels": [
+    {
+      "effort": "none",
+      "description": "Disable Thinking"
+    },
+    {
+      "effort": "high",
+      "description": "Enabled Thinking"
+    }
+  ],
+  "shell_type": "shell_command",
+  "visibility": "list",
+  "supported_in_api": true,
+  "priority": 0,
+  "supports_reasoning_summaries": true,
+  "default_reasoning_summary": "none",
+  "support_verbosity": false,
+  "truncation_policy": {
+    "mode": "bytes",
+    "limit": 10000
+  },
+  "supports_parallel_tool_calls": false,
+  "supports_image_detail_original": false,
+  "context_window": 262144,
+  "max_context_window": 262144,
+  "effective_context_window_percent": 95,
+  "experimental_supported_tools": [],
+  "input_modalities": [
+    "text",
+    "image"
+  ],
+  "supports_search_tool": false
+};
+
+/// Parser-required fields (codex 0.148.0 rejects a catalog whose entries lack
+/// supports_parallel_tool_calls — cc-switch#6661, openai/codex#38934) and the
+/// preamble: rows missing them are backfilled from the neutral entry before
+/// they count as a hit; rows that stay invalid are dropped. Backfillable =
+/// hit, garbage or empty = null — the reference's normalize posture.
+export function normalizeBundled(text) {
+  let d = null;
+  try { d = parse(text); } catch { return null; }
+  const rows = d && Array.isArray(d.models) ? d.models : null;
+  if (!rows || !rows.length) return null;
+  const out = [];
+  for (const row of rows) {
+    if (!row || typeof row !== "object" || typeof row.slug !== "string" || !row.slug) continue;
+    // Parser-required fields backfill from the CLASSIC template's values
+    // (both true — the reference's fill_template_fields_from_static reads
+    // gpt5_5_template.json, not the third-party neutral entry; a false
+    // parallel flag would silently disable parallel tool calls on every
+    // official row — hetero review, reference divergence).
+    for (const k of ["supports_reasoning_summaries", "supports_parallel_tool_calls"])
+      if (row[k] === undefined) row[k] = true;
+    // base_instructions: the row's own model_messages.instructions_template,
+    // verbatim (empty included — same as codex-rs's serializer); a row with
+    // neither instructions form is invalid and dropped. Never fabricate the
+    // neutral preamble onto an official row — that is the exact persona
+    // replacement this synthesizer exists to avoid (hetero review).
+    if (typeof row.base_instructions !== "string") {
+      const t = row.model_messages && row.model_messages.instructions_template;
+      if (typeof t !== "string") continue;
+      row.base_instructions = t;
+    }
+    out.push(row);
+  }
+  // Deviation from the reference, deliberate: cc-switch nulls the WHOLE
+  // catalog when any row stays invalid (it must list every model); we look
+  // up one pinned model, so an unrelated broken row must not degrade it.
+  return out.length ? { models: out } : null;
+}
+
+/// Codex's own model lookup (codex-rs construct_model_info_from_candidates,
+/// via the reference's find_codex_official_model): longest slug-prefix first,
+/// then one namespace level stripped (`openai/gpt-5.5`); case-sensitive. An
+/// alias like `gpt-5.5-high` resolves to `gpt-5.5` instead of falling to the
+/// neutral entry — the preamble-replacement degradation triggered needlessly
+/// (hetero review, alias matching).
+function officialHit(models, model) {
+  const byPrefix = (m) => {
+    let best = null;
+    for (const r of models) {
+      const slug = r && typeof r.slug === "string" ? r.slug : "";
+      if (slug && m.startsWith(slug) && (!best || slug.length > best.slug.length)) best = { slug, row: r };
+    }
+    return best;
+  };
+  let hit = byPrefix(model);
+  if (!hit && model.includes("/")) {
+    const i = model.indexOf("/");
+    const ns = model.slice(0, i), suffix = model.slice(i + 1);
+    if (ns && !/[^A-Za-z0-9_-]/.test(ns) && !suffix.includes("/")) hit = byPrefix(suffix);
+  }
+  return hit;
+}
+
+/// The single-model catalog for one launch (pure). An official hit applies the
+/// reference's forced third-party mutations — slug/priority/visibility, tier
+/// and nux stripping, use_responses_lite=false (official-account protocol must
+/// not leak to a third-party gateway), and the conditional window rewrite
+/// (codex clamps context_window to max_context_window, so a configured window
+/// rewrites BOTH or a stale official maximum silently caps it). A miss returns
+/// the neutral entry with paired windows (config value or 128000), degraded.
+export function catalogEntry(card, official) {
+  const toml = card.toml ?? {};
+  const model = tomlString(toml["model"] ?? "");
+  // tomlString only unwraps quoted literals; a window is usually a bare TOML
+  // number, so coerce both shapes (and reject garbage) here.
+  const confWin = Number(String(toml["model_context_window"] ?? "").replace(/^['"]/, "").replace(/['"]$/, "")) || null;
+  const hit = official && Array.isArray(official.models) ? officialHit(official.models, model) : null;
+  if (hit) {
+    const row = { ...hit.row };
+    row.slug = model;
+    row.priority = 1000; // single-model: index 0
+    row.visibility = "list";
+    row.service_tiers = [];
+    row.additional_speed_tiers = [];
+    row.availability_nux = null;
+    row.upgrade = null;
+    row.use_responses_lite = false;
+    if (hit.slug !== model) row.display_name = model;
+    else if (typeof row.display_name !== "string" || !row.display_name) row.display_name = model;
+    if (confWin) { row.context_window = confWin; row.max_context_window = confWin; }
+    const win = confWin || (typeof hit.row.context_window === "number" ? hit.row.context_window : null) || 128000;
+    return { json: JSON.stringify({ models: [row] }), degraded: false, contextWindow: win };
+  }
+  const row = { ...CODEX_NEUTRAL_CATALOG_ENTRY,
+    slug: model, display_name: model, description: model, use_responses_lite: false,
+    // The reference's neutral builder applies the same five inserts on its
+    // template (codex_catalog_model_entry) — mirrored so the fallback stays
+    // byte-comparable with what cc-switch would emit (Pi review).
+    priority: 1000, visibility: "list", service_tiers: [], additional_speed_tiers: [],
+    availability_nux: null, upgrade: null };
+  const win = confWin || 128000;
+  row.context_window = win;
+  row.max_context_window = win;
+  return { json: JSON.stringify({ models: [row] }), degraded: official ? "model" : "probe", contextWindow: win };
+}
+
+/// The launch machine's own bundled catalog, normalized; cached per machine
+/// for the session. Resolution parity with the launch (CS2): under rc mode the
+/// probe rides the same bash -[l]ic form the launch uses — herdr's exec
+/// carries the app process's environment, not a login shell's, so the two
+/// would otherwise resolve different codex binaries. Any failure → null
+/// (never throws): the neutral entry is the fallback.
+const bundledCache = new Map();
+export async function bundledModels(machine, rc = null) {
+  // Keyed by machine AND resolution form: plain and rc launches resolve
+  // codex through different environments (app-process vs login shell), so
+  // one form's result must never answer for the other (review B1). Only
+  // successful parses cache — a failed probe (absent codex, narrow PATH,
+  // unreachable machine) retries next launch instead of degrading the
+  // whole session (review W3).
+  const key = (machine ?? "") + "\0" + (rc ? (rc.login ? "lic" : "ic") : "plain");
+  if (bundledCache.has(key)) return bundledCache.get(key);
+  let text = null;
+  try {
+    // debug models --bundled answers in milliseconds; 8s bounds a hung
+    // wrapper script without ever racing a healthy probe (Pi review, N6).
+    const r = rc
+      ? await exec("bash", [rc.login ? "-lic" : "-ic", "codex debug models --bundled"], { on: machine, timeout: 8000 })
+      : await exec("codex", ["debug", "models", "--bundled"], { on: machine, timeout: 8000 });
+    if (r && r.code === 0 && typeof r.stdout === "string") text = r.stdout;
+  } catch { /* absent codex / narrow PATH / bad output -> neutral fallback */ }
+  const out = text ? normalizeBundled(text) : null;
+  if (out) bundledCache.set(key, out);
+  return out;
+}
+
+/// Pre-spawn staging (CS3): plant the catalog at the deterministic $TMPDIR
+/// path via write-.part + atomic rename — codex reads the file once, unlocked,
+/// at startup, so a plain overwrite could hand a concurrent same-provider
+/// launch a torn read; rename is atomic on POSIX. A staging failure throws
+/// HERE, before any tab exists. exec takes no stdin, so the body rides argv.
+const tmpdirCache = new Map();
+async function machineTmpdir(machine) {
+  const key = machine ?? "";
+  if (!tmpdirCache.has(key)) {
+    const r = await exec("sh", ["-c", 'printf %s "${TMPDIR:-/tmp}"'], { on: machine });
+    tmpdirCache.set(key, (r && typeof r.stdout === "string" && r.stdout.trim()) || "/tmp");
+  }
+  return tmpdirCache.get(key);
+}
+
+export async function stageCatalog(machine, slug, json) {
+  let dest = "";
+  let r = null;
+  try {
+    const dir = (await machineTmpdir(machine)).replace(/\/+$/, "");
+    dest = dir + "/.herdr-codex-catalog-" + slug + ".json";
+    // mktemp gives the part file a unique unpredictable name: concurrent
+    // same-provider launches never share a part (a shared one re-opens the
+    // torn-write window the rename exists to close), and a pre-planted
+    // symlink at a predictable path cannot redirect the write. The body
+    // rides MULTIPLE argv words (~96KB each, migrate.js CHUNK precedent):
+    // the kernel caps a single argument at MAX_ARG_STRLEN (131,072 bytes on
+    // 4KB pages — measured), and a real official entry already runs ~90KB,
+    // so one word is one preamble-growth away from E2BIG (Pi review).
+    // POSIX mv moves INTO a directory and reports success (mv -T is not
+    // portable), so a directory squatting on the dest is detected upfront
+    // and falls back to an unpredictable sibling name; a rename that FAILS
+    // (a foreign regular file squatting in a sticky $TMPDIR — EPERM) falls
+    // back the same way, keeping availability instead of a permanent
+    // honest-looking refusal. stdout carries the path actually planted.
+    // Chunk by BYTES (Buffer.byteLength), never by string length: a CJK
+    // model name makes 96k characters ≈ 288k bytes and re-opens the cliff
+    // (Pi review). Code points are never split, so the file is byte-exact.
+    const chunks = [];
+    let cur = "", bytes = 0;
+    for (const ch of json) {
+      const b = Buffer.byteLength(ch);
+      if (bytes + b > 90000) { chunks.push(cur); cur = ch; bytes = b; }
+      else { cur += ch; bytes += b; }
+    }
+    if (cur) chunks.push(cur);
+    r = await exec("sh",
+      ["-c", 'd="$1"; shift; if [ -d "$d" ]; then d="$(mktemp "${d%.json}.blocked.XXXXXX")" || exit 1; fi; p="$(mktemp "$d.XXXXXX")" || exit 1; for c in "$@"; do printf %s "$c" >> "$p" || { rm -f "$p"; exit 1; }; done; if mv "$p" "$d"; then printf %s "$d"; else f="$(mktemp "${d%.json}.blocked.XXXXXX")" && mv "$p" "$f" && printf %s "$f" || { rm -f "$p" "$f"; exit 1; }; fi', "sh", dest, ...chunks],
+      { on: machine });
+  } catch (e) {
+    throw new Error("could not stage the model catalog on " + (machine ?? "this machine") + " (" + dest + "): " + String(e?.message ?? e));
+  }
+  const planted = r && r.code === 0 && typeof r.stdout === "string" ? r.stdout.trim() : "";
+  if (planted.startsWith("/")) return planted;
+  const why = r && r.stderr && String(r.stderr).trim() ? ": " + String(r.stderr).trim().slice(0, 160) : "";
+  throw new Error("could not stage the model catalog on " + (machine ?? "this machine") + " (" + dest + ")" + why);
+}
+
 /// Per-launch argv for codex (Unix). Takes classifyCodex's output plus the
 /// machine's live config.toml text. Key travels in the environment (never on
 /// the command line — env_key beats a leftover bearer, upstream §codex_terminal);
@@ -477,11 +731,11 @@ function classifyCodex(settings, meta, category) {
 /// rc = {login} switches to the profile-following bash -[l]ic form, same as claude.
 /// mcp = {overrides} in the no-handoff fallback: the -c strings ride the
 /// argv (tokens included — the documented fallback posture).
-export function codexArgv(card, liveText, liveLogin, extra = [], rc = null, homeDir = null, mcp = null, plain = false) {
+export function codexArgv(card, liveText, liveLogin, extra = [], rc = null, homeDir = null, mcp = null, plain = false, staged = null) {
   const env = [CODEX_KEY_ENV + "=" + (card.key || "")];
   if (homeDir) env.push("CODEX_HOME=" + homeDir.replace(/\/+$/, "") + "/.codex");
   const mcpWords = mcp ? mcp.overrides.flatMap(o => ["-c", o]) : [];
-  const words = ["codex", "--no-daemon", ...codexOverrides(card, liveText, liveLogin, plain), ...mcpWords, ...extra];
+  const words = ["codex", "--no-daemon", ...codexOverrides(card, liveText, liveLogin, plain, staged), ...mcpWords, ...extra];
   if (rc) return ["env", ...env, "bash", rc.login ? "-lic" : "-ic", words.map(shellQuote).join(" ")];
   return ["env", ...env, ...words];
 }
@@ -492,7 +746,7 @@ export function codexArgv(card, liveText, liveLogin, extra = [], rc = null, home
 /// window, uncovered route-table keys, a selected profile) refuse the
 /// launch, as upstream does. plain (cc-switch's own terminal's plain path):
 /// the live file IS this provider's — every live-dependent check stands down.
-function codexOverrides(card, liveText, liveLogin, plain = false) {
+function codexOverrides(card, liveText, liveLogin, plain = false, staged = null) {
   const toml = card.toml ?? {};
   const live = parseToml(liveText ?? "");
   const fail = keys => { throw new Error("codex config.toml keeps " + keys + " from the machine's current provider — switch to this provider in cc-switch first"); };
@@ -535,7 +789,11 @@ function codexOverrides(card, liveText, liveLogin, plain = false) {
     for (const k of [...CODEX_FLOOR_TOP, ...CODEX_EXCLUSIVE_TOP]) {
       if (!(k in live) || written.has(k)) continue;
       if (["model_provider", "openai_base_url", "experimental_bearer_token", "base_url", "wire_api", "disable_response_storage", "web_search"].includes(k)) continue;
-      if (k === "model_catalog_json" || k === "model_context_window" || k === "model_auto_compact_token_limit") fail(k);
+      if (k === "model_catalog_json" || k === "model_context_window" || k === "model_auto_compact_token_limit") {
+        if (k === "model_catalog_json" && staged) { set(k, JSON.stringify(staged.pointer)); continue; }
+        if (k === "model_context_window" && staged && staged.contextWindow) { set(k, String(staged.contextWindow)); continue; }
+        fail(k);
+      }
       if (k === "model" || k === "review_model") { if (model == null) fail(k); set(k, toml["model"]); continue; }
       if (neutral[k]) { set(k, neutral[k]); continue; }
       fail(k);
@@ -581,7 +839,7 @@ const codexHarness = {
   /// carried server becomes a -c mcp_servers.<name>={…} override; with the
   /// handoff the strings travel as sourced assignments ($PMMn → -c
   /// "$PMMn"), so their env tokens stay off the recorded command line.
-  async launch(card, machine, extra, rc, mcp, src) {
+  async launch(card, machine, extra, rc, mcp, src, info = null) {
     const liveText = await readText(machine, ".codex/config.toml", home() + "/.codex/config.toml");
     // cc-switch's own terminal logic (codex_terminal.rs): a launch on the
     // machine whose database the providers came from, of the provider that
@@ -592,6 +850,39 @@ const codexHarness = {
     // current flag speaks for the source database, the live file lives on
     // the target.
     const plain = (machine ?? "") === (src ?? "") && !!card.current;
+    // A row-carried catalog pointer dangles on any other machine — codex reads
+    // it once at startup with no fallback, so the launch would abort before
+    // the first turn (upstream-evidenced). Refuse before anything is staged.
+    const rowCatalog = card.toml && card.toml["model_catalog_json"] != null;
+    if (rowCatalog && (machine ?? "") !== (src ?? ""))
+      throw new Error("this provider's config points model_catalog_json at its own machine's file — on another machine the path dangles and codex aborts at startup. Launch it on its machine, or clear the key from the provider's config");
+    // The synthesis (arch-design layering): a foreign catalog pointer in the
+    // live file, no key of our own -> stage a single-model catalog. D4's
+    // consume point: responses routes only (exact or defaulted — chat-class
+    // cards never get past classify; other spellings keep the old refusal).
+    let staged = null;
+    if (!plain && !rowCatalog) {
+      const liveCatalog = parseToml(liveText ?? "")["model_catalog_json"];
+      const wire = tomlString((card.table ?? {}).wire_api ?? "");
+      const pinned = tomlString(card.toml?.["model"] ?? "");
+      // A model-less row must keep the old refusal: synthesis without a
+      // pinned model would write a null-slug entry codex rejects at startup
+      // (review W4 — the error direction stays "admit less").
+      if (liveCatalog !== undefined && pinned && (wire === null || wire === "responses")) {
+        const official = await bundledModels(machine, rc);
+        const entry = catalogEntry(card, official);
+        // The dest mixes the pinned model into the name: two providers whose
+        // names slugify alike must not share one catalog (review N1).
+        // The name part folds (display only); the model part keeps case —
+        // two providers pinning GPT-5.5 and gpt-5.5 must not share one
+        // address while their staged entries differ (Pi review).
+        const namePart = String(card.name ?? "x").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+        const modelPart = pinned.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+        const slug = (namePart + "-" + modelPart).slice(0, 80) || "x";
+        staged = { pointer: await stageCatalog(machine, slug, entry.json), contextWindow: entry.contextWindow, degraded: entry.degraded };
+      }
+    }
+    if (info) info.degraded = staged ? staged.degraded : false;
     const homeDir = await machineHome(machine);
     const login = await codexLiveLogin(machine);
     const homeEnv = "export CODEX_HOME=" + shellQuote(homeDir.replace(/\/+$/, "") + "/.codex") + "; ";
@@ -604,22 +895,22 @@ const codexHarness = {
         CODEX_KEY_ENV,
         "export " + [CODEX_KEY_ENV, ...names].join(" ") + "; " + homeEnv + (rc
           ? 'exec bash ' + (rc.login ? "-lic" : "-ic") + " "
-            + shellQuote(["codex", "--no-daemon", ...codexOverrides(card, liveText, login, plain)].map(shellQuote).join(" ") + mcpWords
+            + shellQuote(["codex", "--no-daemon", ...codexOverrides(card, liveText, login, plain, staged)].map(shellQuote).join(" ") + mcpWords
               + (extra.length ? " " + extra.map(shellQuote).join(" ") : ""))
-          : "exec codex --no-daemon " + codexOverrides(card, liveText, login, plain).map(shellQuote).join(" ") + mcpWords
+          : "exec codex --no-daemon " + codexOverrides(card, liveText, login, plain, staged).map(shellQuote).join(" ") + mcpWords
             + (extra.length ? " " + extra.map(shellQuote).join(" ") : "")));
       if (argv) return argv;
-      return codexArgv(card, liveText, login, extra, rc, homeDir, { overrides }, plain);
+      return codexArgv(card, liveText, login, extra, rc, homeDir, { overrides }, plain, staged);
     }
     const file = await handoffFile(machine, String(card.key ?? ""));
     if (file) {
-      const quoted = ["codex", "--no-daemon", ...codexOverrides(card, liveText, login, plain), ...extra].map(shellQuote).join(" ");
+      const quoted = ["codex", "--no-daemon", ...codexOverrides(card, liveText, login, plain, staged), ...extra].map(shellQuote).join(" ");
       const head = "export " + CODEX_KEY_ENV + '="$s"; ' + homeEnv;
       return handoffScript(file, rc
         ? head + "exec bash " + (rc.login ? "-lic" : "-ic") + " " + shellQuote(quoted)
         : head + "exec " + quoted);
     }
-    return codexArgv(card, liveText, login, extra, rc, homeDir, null, plain);
+    return codexArgv(card, liveText, login, extra, rc, homeDir, null, plain, staged);
   },
 };
 
@@ -781,10 +1072,13 @@ export async function readProviders(machine, app = "claude") {
 /// set for this harness carries along (mcpContext). Dynamic env
 /// conventions live in the rc mode (RC key): the profile is the general
 /// mechanism, the mod hardcodes none.
-export async function launchArgv(provider, extra = [], machine = null, app = "claude", src) {
+/// info (optional out-param): on return info.degraded is false, or the
+/// reason the launch ran on the neutral preamble — "model" (the probe ran,
+/// the pinned name missed) or "probe" (codex could not be probed at all).
+export async function launchArgv(provider, extra = [], machine = null, app = "claude", src, info = null) {
   if (await machinePlatform(machine) === "windows")
     throw new Error("this machine runs Windows — provider launches need the Windows recipes (not built yet). Plain agent rows still work.");
   const harness = HARNESS[app] ?? claudeHarness;
   return harness.launch(provider, machine, extraArgs(machine, extra), await rcMode(machine),
-    await mcpContext(machine, src, app), src);
+    await mcpContext(machine, src, app), src, info);
 }

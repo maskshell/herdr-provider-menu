@@ -5,6 +5,14 @@ import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import { theme, spaces, run, shared, setShared, window, checking, props, openOverlay, closeOverlay, knownAgents, layout, agents, panes, hc, exec } from "herdr";
 import { readProviders, launchArgv, handoffAvailable, machinePlatform, EXTRA, RC, SRC, MCP, MCPONLY, HARNESS, cardNote } from "./providers.js";
+
+/// A degraded synthesis still launches — this names WHY, so the panel note
+/// reads as information, not as a failure (Pi review: probe-miss and
+/// model-miss are different facts).
+const degradedNote = (p, why) =>
+  p.name + " launched on a neutral model preamble — " +
+  (why === "probe" ? "codex could not be probed on that machine" : "no official catalog entry for it on that machine");
+
 import { MOVE, EXCLUDE, findClaudeSession, findCodexSession, buildManifest, markerManifest, readMarker, writeMarker, targetGate, transferPlan, runTransfer, placeClaudeSession, placeCodexSession, resumeArgs, newId, targetPlatform, excludedPresent, defaultPrompt, verifyCopied, readGitBranch, countDrift, cleanupPacks, slugOf, planWantsPack } from "./migrate.js";
 
 /// shared() key for the last good read of one harness (instant open, re-check).
@@ -160,6 +168,7 @@ export default class ProviderMenu extends View {
     this.agents = shared(KNOWN)?.[""] ?? []; // section icons render at once, re-check below
     this.note = "";
     this.launchNote = "";
+    this.notice = "";
     // An in-flight session move (T12): staged in shared() so it survives
     // panel restarts — the flow spans space switches and minutes.
     this.move = shared(MOVE) ?? null;
@@ -322,14 +331,18 @@ export default class ProviderMenu extends View {
 
   doLaunch(p, cx, app) {
     this.launchNote = "";
+    this.notice = "";
     cx.spawn(async cx => {
       const space = spaces().find(s => s.active);
       try {
         // src = the machine the shown cards came from: the MCP set (when the
         // per-machine switch carries it) must come from the same database.
         const src = this.src[app] ?? space?.machine ?? "";
-        const argv = await launchArgv(p, [], space?.machine ?? null, app, src);
+        const info = {};
+        const argv = await launchArgv(p, [], space?.machine ?? null, app, src, info);
         run("tab.new", { name: HARNESS[app].title + " (" + p.name + ")", space: space?.id, argv });
+        if (info.degraded)
+          this.notice = degradedNote(p, info.degraded);
       } catch (e) {
         this.launchNote = String(e?.message ?? e);
       }
@@ -1037,9 +1050,11 @@ export default class ProviderMenu extends View {
       cx.spawn(async cx => {
         const space = spaces().find(s => s.active);
         try {
-          const argv = await launchArgv(this.bProvider, [], space?.machine ?? null, this.bApp, this.bSrc);
+          const info = {};
+          const argv = await launchArgv(this.bProvider, [], space?.machine ?? null, this.bApp, this.bSrc, info);
           closeOverlay(p.overlay);
           run("tab.new", { name: HARNESS[this.bApp].title + " (" + this.bProvider.name + ")", space: space?.id, argv });
+          if (info.degraded) this.notice = degradedNote(this.bProvider, info.degraded);
         } catch (e) {
           this.bNote = String(e?.message ?? e);
           cx.notify();
@@ -1193,6 +1208,8 @@ export default class ProviderMenu extends View {
       .when(unix && this.note, el => el.child(div().flex_1().px(6).py(8).text_color(t.dim).child(this.hint())))
       .when(unix && !this.note, el => el.child(v_flex().id("list").flex_1().min_h(0).overflow_y_scrollbar()
         .children(Object.keys(HARNESS).map(app => this.section(app)))))
+      .when(this.notice, el => el.child(div().px(6).py(6).text_color(t.dim)
+        .child(this.notice)))
       .when(this.launchNote, el => el.child(div().px(6).py(6).text_color(t.dim)
         .child("Launch failed: " + this.launchNote)))
       // The move entry rides the panel's bottom edge — it has nothing to do

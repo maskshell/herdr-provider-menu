@@ -64,6 +64,11 @@ export default class AgentMenu extends View {
   /// menu init — machines without cc-switch pay nothing until they ask.
   expand(cx, key) {
     const machine = spaces().find(s => s.active)?.machine ?? null;
+    // The cards below come from THIS machine; the click later must source
+    // from it even if the active space changed while the submenu was open
+    // (Pi review: a launch-time re-read can pair X's current flag with Y's
+    // live file and wrongly enable the plain branch).
+    this.readMachine = machine;
     this.sub = key;
     this.providers = null;
     this.note = "";
@@ -81,7 +86,11 @@ export default class AgentMenu extends View {
     const app = this.sub;
     cx.spawn(async cx => {
       try {
-        const argv = await launchArgv(p, [], space?.machine ?? null, app);
+        // src: the machine the shown cards were READ from (stashed in
+        // expand), not a launch-time re-read — same-machine submenu launches
+        // stay same-machine, and a space switch mid-menu degrades to the
+        // honest cross-machine checks instead of a wrong plain branch.
+        const argv = await launchArgv(p, [], space?.machine ?? null, app, this.readMachine ?? space?.machine ?? "");
         closeOverlay(props().overlay);
         run("tab.new", { name: HARNESS[app].title + " (" + p.name + ")", space: space?.id, argv });
       }
