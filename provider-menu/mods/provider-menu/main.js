@@ -561,6 +561,7 @@ export default class ProviderMenu extends View {
   /// stage it. Honest sentences for every way this can come up empty.
   startMove(cx) {
     this.launchNote = "";
+    this.notice = "";
     this.refresh(cx);
     cx.spawn(async cx => {
       if (this.move?.busy) {
@@ -714,6 +715,11 @@ export default class ProviderMenu extends View {
     XFER = true;
     this.xfer = true;
     this.cancel = false;
+    // The transfer owns the panel now — a launch error (or notice) from a
+    // card click before it is stale and must not ride along through the
+    // whole copy/update.
+    this.launchNote = "";
+    this.notice = "";
     this.xstat = "listing the workspace…";
     const m = { ...this.move };
     cx.notify();
@@ -863,8 +869,8 @@ export default class ProviderMenu extends View {
             ...m.shells.filter(d => !nowSet.has(d)).slice(0, 4).map((dir, i) => this.shellRow("move-shell-" + i, dir)),
           ]));
       })
-      .when(m.note, el => el.children(tips("move-note", m.note)))
-      .when(m.err, el => el.child(div().id("move-err").pt(2).text_size(12.5).text_color(t.blocked).child(m.err)))
+      .when(m.note && !m.target, el => el.children(tips("move-note", m.note)))
+      .when(m.err && !m.target, el => el.child(div().id("move-err").pt(2).text_size(12.5).text_color(t.blocked).child(m.err)))
 
       // The refused reason and the promoted line can outrun the 280px panel:
       // min_w(0) lets flex_1 actually bound the text (a flex item's
@@ -906,6 +912,14 @@ export default class ProviderMenu extends View {
           // not promise the other thing).
           .child(div().flex_1().min_w(0).text_size(12.5).text_color(m.armed ? t.foreground : t.dim)
             .child((m.target?.gate?.kind === "resume" ? "Update" : "Copy") + " the session and workspace above")))
+        // A note with a pick in hand (a canceled run, a "back on the source
+        // machine" ping) belongs HERE — beside the action it talks about —
+        // not up in the card's pre-pick zone above the to-line. A FAILED
+        // run's error line joins it, red and first (severity before
+        // guidance) — the retry sentence it carries talks about this zone's
+        // own pick.
+        .when(m.err, e => e.child(div().id("move-err").pt(4).text_size(12.5).text_color(t.blocked).child(m.err)))
+        .when(m.note, e => e.child(div().id("move-note").pt(4).text_size(12.5).text_color("#a16207").child(m.note)))
         // The guidance zone: a hairline, then EITHER the run row or the
         // tips — the pick is done once a transfer runs, so the status and
         // its Cancel chip take the tips' place exactly (the card docks at
