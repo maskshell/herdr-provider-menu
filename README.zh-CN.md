@@ -6,9 +6,9 @@
 
 Claude Code 与 Codex 已在 sandbox 与真机(macOS、Linux)验证，含跨机启动。会话复制已在真机端到端验证(Claude Code)；codex 侧经 rig 验证，其 resume 参数与 codex 0.172.0 的文档形态一致(`resume <id> <prompt>`)；真机回合仍待。Windows 暂不支持。[DESIGN.md](DESIGN.md) 说明工作原理、设计决策与安全姿态；[REVIEW.md](REVIEW.md) 记录验证过程。
 
-![带供应商子菜单的 + 菜单](agent-menu/preview.png)
+<p><img src="agent-menu/preview.png" width="258" alt="带供应商子菜单的 + 菜单"></p>
 
-![停靠的供应商面板](provider-menu/preview.png)
+<p><img src="provider-menu/preview.png" width="403" alt="停靠的供应商面板"></p>
 
 仓库含两个包，各自以独立条目(附配方与预览图)列于 herdr.dev/mods：`agent-menu/`(+ 弹窗，两个 mod)与 `provider-menu/`(停靠面板)。
 

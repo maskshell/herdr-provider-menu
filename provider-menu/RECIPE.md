@@ -2,7 +2,7 @@
 
 A 280px panel docked to the right of a layout: every cc-switch provider card on this machine, grouped by agent (Claude, Codex). Click a card to start that agent in a new tab under that identity, with the card's environment applied to that one launch — nothing is switched in cc-switch and nothing on disk changes.
 
-![Provider menu panel](preview.png)
+<p><img src="preview.png" width="403" alt="Provider menu panel"></p>
 
 ## What you see
 

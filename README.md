@@ -6,9 +6,9 @@ Start Claude Code and Codex in [Herdr](https://github.com/herdrdev/herdr-app) wi
 
 Claude Code and Codex are verified in the sandbox and on real machines (macOS and Linux), including cross-machine launches. Session copies are verified end to end on real machines for Claude Code; the codex side is rig-verified and its resume argument matches codex 0.172.0's documented form (`resume <id> <prompt>`); a real-codex round is still pending. Windows is not supported yet. [DESIGN.md](DESIGN.md) explains how the mod works, its decisions, and its security posture. [REVIEW.md](REVIEW.md) records the verification.
 
-![The + menu with a provider submenu](agent-menu/preview.png)
+<p><img src="agent-menu/preview.png" width="258" alt="The + menu with a provider submenu"></p>
 
-![The docked provider panel](provider-menu/preview.png)
+<p><img src="provider-menu/preview.png" width="403" alt="The docked provider panel"></p>
 
 The repo holds two packages, each listed on herdr.dev/mods with its own recipe and preview: `agent-menu/` (the `+` popup, two mods) and `provider-menu/` (the docked panel).
 

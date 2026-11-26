@@ -2,7 +2,7 @@
 
 The tab bar's + opens the usual start menu, but the Claude Code and Codex rows each expand into the cc-switch provider cards on this machine. Picking a card starts the agent in a new tab under that identity, with the card's environment applied to that one launch — nothing is switched in cc-switch and nothing on disk changes. The plain launch (top-level digit) still starts the agent exactly as the stock menu does.
 
-![Agent menu with cc-switch identities](preview.png)
+<p><img src="preview.png" width="258" alt="Agent menu with cc-switch identities"></p>
 
 ## What you see
 
