@@ -786,6 +786,14 @@ export default class ProviderMenu extends View {
     const nm = s => s.length > 12 ? s.slice(0, 11) + "…" : s;
     const srcName = nm(m.src === "" ? "this machine" : m.src);
     const line = (id, text, pt) => div().id(id).pt(pt).text_size(12.5).text_color(t.dim).child(text);
+  /// Every guidance line in the card follows one rule — a hairline above,
+  /// then the gold tips color. The armed "pick a provider" line set the
+  /// precedent; the first-step hint and the card's notes follow it, and any
+  /// future tips must too (never a bare dim line).
+  const tips = (id, text) => [
+    div().id(id + "-rule").mt(5).h(1).bg(t.input),
+    div().id(id).pt(4).text_size(12.5).text_color("#a16207").child(text),
+  ];
     // A group label: one step under its rows, sitting at the margin while
     // the rows indent under it — the card's hierarchy cue.
     const label = (id, text, pt = 0) => div().id(id).pt(pt).text_size(11).text_color(t.dim).child(text);
@@ -819,8 +827,10 @@ export default class ProviderMenu extends View {
         .child(div().flex_1().min_w(0).text_size(12.5).text_color(t.dim).child("from " + srcName + ":")))
       .child(div().id("move-src-path").pl(29).pr(3).text_size(12.5).text_color(t.foreground)
         .child(m.root))
-      .when(!m.target && cur === m.src, el => el.child(line("move-hint-src",
-        "Switch to a space on another machine, open a shell there, cd to an empty directory", 2)))
+      // !m.note: the source-machine note repeats this advice — one tips
+      // zone shows at a time, never two stacked.
+      .when(!m.target && cur === m.src && !m.note, el => el.children(tips("move-hint-src",
+        "Switch to a space on another machine, open a shell there, cd to an empty directory")))
       .when(!m.target && cur !== m.src, el => {
         // The current tab leads: its shells are what the person is looking
         // at right now, so they show without a click (init's watcher pings
@@ -853,7 +863,7 @@ export default class ProviderMenu extends View {
             ...m.shells.filter(d => !nowSet.has(d)).slice(0, 4).map((dir, i) => this.shellRow("move-shell-" + i, dir)),
           ]));
       })
-      .when(m.note, el => el.child(line("move-note", m.note, 2)))
+      .when(m.note, el => el.children(tips("move-note", m.note)))
       .when(m.err, el => el.child(div().id("move-err").pt(2).text_size(12.5).text_color(t.blocked).child(m.err)))
 
       // The refused reason and the promoted line can outrun the 280px panel:
@@ -1084,7 +1094,7 @@ export default class ProviderMenu extends View {
         .child("The credential (and any carried MCP definitions) travels in the launch command. Herdr's core on " + name(this.bDst) + " records that command in its state file terminals.json. The record stays after the terminal closes; nothing cleans it automatically. Live sessions also show the command in /proc."))
       .child(div().pt(8).text_size(11.5).text_color(t.dim)
         .child("To keep a credential off a machine, launch from that machine's own database instead."))
-      .when(this.bNote, el => el.child(div().pt(8).text_size(11.5).text_color(t.dim).child(this.bNote)))
+      .when(this.bNote, el => el.child(div().pt(8).text_size(11.5).text_color(t.blocked).child(this.bNote)))
       .child(h_flex().pt(16).gap(8).justify_end()
         .child(btn("bd-cancel", "Cancel", false, cx => closeOverlay(p.overlay)))
         .child(btn("bd-always", "Always for this pair", false, always))
@@ -1210,7 +1220,9 @@ export default class ProviderMenu extends View {
         .children(Object.keys(HARNESS).map(app => this.section(app)))))
       .when(this.notice, el => el.child(div().px(6).py(6).text_color(t.dim)
         .child(this.notice)))
-      .when(this.launchNote, el => el.child(div().px(6).py(6).text_color(t.dim)
+      // A launch failure is an error — the blocked color, not the dim gray
+      // a success notice uses (the two were indistinguishable before).
+      .when(this.launchNote, el => el.child(div().px(6).py(6).text_color(t.blocked)
         .child("Launch failed: " + this.launchNote)))
       // The move entry rides the panel's bottom edge — it has nothing to do
       // with the args/rc/mcp rows above. A staged move's card docks below
