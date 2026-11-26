@@ -5,3 +5,14 @@ __pycache__/
 # loads; packages stay clean and the kit regenerates on the user machine
 mods/*/gpui-kit.d.ts
 mods/*/jsconfig.json
+.claude/parallel-dev/loop-state.json
+.claude/parallel-dev/runs/
+.env
+.env.solidforge
+!.env.solidforge.example
+.llm-provider.*.json
+
+# solidforge external-tool configs (scaffolded, dormant in this repo — kept on disk for later use)
+.vale.ini
+.semgrep.yml
+.spectral.yaml
