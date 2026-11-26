@@ -218,7 +218,7 @@ export default class AgentMenu extends View {
               () => run("tab.new", { name: a.name, space: space?.id, argv: a.run }), a.installed ? (i < 9 ? String(i + 1) : "") : "not installed", a.installed)];
           return [this.agentRow(a, i), ...(this.sub === a.key ? [this.subList()] : [])];
         }))
-        .when(this.launchNote, el => el.child(div().id("launch-note").px(9).py(4).text_size(11.5).text_color(t.dim).child(this.launchNote)))
+        .when(this.launchNote, el => el.child(div().id("launch-note").px(9).py(4).text_size(11.5).text_color(t.blocked).child(this.launchNote)))
         .when(this.failed || this.agents.length === 0, el => el.child(div().px(9).py(6).text_color(t.dim).child(this.failed ? "Could not check installed agents" : "Checking installed agents…"))))
       .child(div().h(1).mx(4).my(5).bg(t.border))
       .child(this.row("space", div().w(14).child("+"), "New space", () => run("space.new"), shortcut("space.new")))
