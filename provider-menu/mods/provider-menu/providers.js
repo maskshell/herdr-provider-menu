@@ -477,24 +477,26 @@ function classifyCodex(settings, meta, category) {
 /// rc = {login} switches to the profile-following bash -[l]ic form, same as claude.
 /// mcp = {overrides} in the no-handoff fallback: the -c strings ride the
 /// argv (tokens included — the documented fallback posture).
-export function codexArgv(card, liveText, liveLogin, extra = [], rc = null, homeDir = null, mcp = null) {
+export function codexArgv(card, liveText, liveLogin, extra = [], rc = null, homeDir = null, mcp = null, plain = false) {
   const env = [CODEX_KEY_ENV + "=" + (card.key || "")];
   if (homeDir) env.push("CODEX_HOME=" + homeDir.replace(/\/+$/, "") + "/.codex");
   const mcpWords = mcp ? mcp.overrides.flatMap(o => ["-c", o]) : [];
-  const words = ["codex", "--no-daemon", ...codexOverrides(card, liveText, liveLogin), ...mcpWords, ...extra];
+  const words = ["codex", "--no-daemon", ...codexOverrides(card, liveText, liveLogin, plain), ...mcpWords, ...extra];
   if (rc) return ["env", ...env, "bash", rc.login ? "-lic" : "-ic", words.map(shellQuote).join(" ")];
   return ["env", ...env, ...words];
 }
 
-/// The -c overrides: rewritten route table, the card's own top/nested fields,
-/// and neutralization of live-only leftovers (medium efforts, false summaries);
-/// leftovers with no neutral form (catalog pointer, context window, uncovered
-/// route-table keys, a selected profile) refuse the launch, as upstream does.
-function codexOverrides(card, liveText, liveLogin) {
+/// The -c overrides: rewritten route table, the provider's own top/nested
+/// fields, and neutralization of live-only leftovers (medium efforts, false
+/// summaries); leftovers with no neutral form (catalog pointer, context
+/// window, uncovered route-table keys, a selected profile) refuse the
+/// launch, as upstream does. plain (cc-switch's own terminal's plain path):
+/// the live file IS this provider's — every live-dependent check stands down.
+function codexOverrides(card, liveText, liveLogin, plain = false) {
   const toml = card.toml ?? {};
   const live = parseToml(liveText ?? "");
-  const fail = keys => { throw new Error("codex config.toml keeps " + keys + " from the current provider — switch to this card in cc-switch first"); };
-  if ("profile" in live) fail("a selected profile");
+  const fail = keys => { throw new Error("codex config.toml keeps " + keys + " from the machine's current provider — switch to this provider in cc-switch first"); };
+  if (!plain && "profile" in live) fail("a selected profile");
 
   const ours = {};
   for (const [k, raw] of Object.entries(card.table)) {
@@ -509,7 +511,7 @@ function codexOverrides(card, liveText, liveLogin) {
   const uncovered = Object.keys(live).filter(p => p.startsWith(liveTablePrefix))
     .map(p => p.slice(liveTablePrefix.length))
     .filter(k => !(k in ours) && k !== "experimental_bearer_token" && !CODEX_KEPT.includes(k));
-  if (uncovered.length) fail("model_providers.custom." + uncovered.join(", "));
+  if (!plain && uncovered.length) fail("model_providers.custom." + uncovered.join(", "));
 
   const out = ["model_provider='" + CODEX_ROUTE + "'",
     "model_providers." + CODEX_ROUTE + "=" + "{" + Object.entries(ours).map(([k, v]) => tomlKey(k) + "=" + v).join(",") + "}"];
@@ -523,23 +525,28 @@ function codexOverrides(card, liveText, liveLogin) {
   for (const segs of CODEX_FLOOR_NESTED)
     if (toml[segs.join(".")] != null) set(segs.join("."), toml[segs.join(".")]);
 
-  // Neutralize what the previous provider left in live and this card does not set.
-  const written = new Set(out.map(o => o.slice(0, o.indexOf("="))));
-  const neutral = { model_reasoning_effort: "'medium'", plan_mode_reasoning_effort: "'medium'", model_supports_reasoning_summaries: "false", model_verbosity: "'medium'" };
-  for (const k of [...CODEX_FLOOR_TOP, ...CODEX_EXCLUSIVE_TOP]) {
-    if (!(k in live) || written.has(k)) continue;
-    if (["model_provider", "openai_base_url", "experimental_bearer_token", "base_url", "wire_api", "disable_response_storage", "web_search"].includes(k)) continue;
-    if (k === "model_catalog_json" || k === "model_context_window" || k === "model_auto_compact_token_limit") fail(k);
-    if (k === "model" || k === "review_model") { if (model == null) fail(k); set(k, toml["model"]); continue; }
-    if (neutral[k]) { set(k, neutral[k]); continue; }
-    fail(k);
-  }
-  for (const segs of CODEX_FLOOR_NESTED) {
-    const path = segs.join(".");
-    if (!(path in live) || written.has(path)) continue;
-    if (path.endsWith("default_subagent_reasoning_effort")) { set(path, "'medium'"); continue; }
-    if (model == null) fail(path);
-    set(path, toml["model"]);
+  // Neutralize what the previous provider left in live and this provider
+  // does not set. Stands down for plain: the live file is this provider's
+  // own state — its "leftovers" are values cc-switch wrote for it on the
+  // last switch (the catalog pointer, planned windows).
+  if (!plain) {
+    const written = new Set(out.map(o => o.slice(0, o.indexOf("="))));
+    const neutral = { model_reasoning_effort: "'medium'", plan_mode_reasoning_effort: "'medium'", model_supports_reasoning_summaries: "false", model_verbosity: "'medium'" };
+    for (const k of [...CODEX_FLOOR_TOP, ...CODEX_EXCLUSIVE_TOP]) {
+      if (!(k in live) || written.has(k)) continue;
+      if (["model_provider", "openai_base_url", "experimental_bearer_token", "base_url", "wire_api", "disable_response_storage", "web_search"].includes(k)) continue;
+      if (k === "model_catalog_json" || k === "model_context_window" || k === "model_auto_compact_token_limit") fail(k);
+      if (k === "model" || k === "review_model") { if (model == null) fail(k); set(k, toml["model"]); continue; }
+      if (neutral[k]) { set(k, neutral[k]); continue; }
+      fail(k);
+    }
+    for (const segs of CODEX_FLOOR_NESTED) {
+      const path = segs.join(".");
+      if (!(path in live) || written.has(path)) continue;
+      if (path.endsWith("default_subagent_reasoning_effort")) { set(path, "'medium'"); continue; }
+      if (model == null) fail(path);
+      set(path, toml["model"]);
+    }
   }
   return out.flatMap(o => ["-c", o]);
 }
@@ -574,8 +581,17 @@ const codexHarness = {
   /// carried server becomes a -c mcp_servers.<name>={…} override; with the
   /// handoff the strings travel as sourced assignments ($PMMn → -c
   /// "$PMMn"), so their env tokens stay off the recorded command line.
-  async launch(card, machine, extra, rc, mcp) {
+  async launch(card, machine, extra, rc, mcp, src) {
     const liveText = await readText(machine, ".codex/config.toml", home() + "/.codex/config.toml");
+    // cc-switch's own terminal logic (codex_terminal.rs): a launch on the
+    // machine whose database the providers came from, of the provider that
+    // database marks current, runs against a live config.toml that IS this
+    // provider's own state — catalog pointer included (cc-switch maintains
+    // it per switch). Nothing in it is a foreign leftover, so every
+    // live-dependent check stands down. Cross-machine never qualifies: the
+    // current flag speaks for the source database, the live file lives on
+    // the target.
+    const plain = (machine ?? "") === (src ?? "") && !!card.current;
     const homeDir = await machineHome(machine);
     const login = await codexLiveLogin(machine);
     const homeEnv = "export CODEX_HOME=" + shellQuote(homeDir.replace(/\/+$/, "") + "/.codex") + "; ";
@@ -588,22 +604,22 @@ const codexHarness = {
         CODEX_KEY_ENV,
         "export " + [CODEX_KEY_ENV, ...names].join(" ") + "; " + homeEnv + (rc
           ? 'exec bash ' + (rc.login ? "-lic" : "-ic") + " "
-            + shellQuote(["codex", "--no-daemon", ...codexOverrides(card, liveText, login)].map(shellQuote).join(" ") + mcpWords
+            + shellQuote(["codex", "--no-daemon", ...codexOverrides(card, liveText, login, plain)].map(shellQuote).join(" ") + mcpWords
               + (extra.length ? " " + extra.map(shellQuote).join(" ") : ""))
-          : "exec codex --no-daemon " + codexOverrides(card, liveText, login).map(shellQuote).join(" ") + mcpWords
+          : "exec codex --no-daemon " + codexOverrides(card, liveText, login, plain).map(shellQuote).join(" ") + mcpWords
             + (extra.length ? " " + extra.map(shellQuote).join(" ") : "")));
       if (argv) return argv;
-      return codexArgv(card, liveText, login, extra, rc, homeDir, { overrides });
+      return codexArgv(card, liveText, login, extra, rc, homeDir, { overrides }, plain);
     }
     const file = await handoffFile(machine, String(card.key ?? ""));
     if (file) {
-      const quoted = ["codex", "--no-daemon", ...codexOverrides(card, liveText, login), ...extra].map(shellQuote).join(" ");
+      const quoted = ["codex", "--no-daemon", ...codexOverrides(card, liveText, login, plain), ...extra].map(shellQuote).join(" ");
       const head = "export " + CODEX_KEY_ENV + '="$s"; ' + homeEnv;
       return handoffScript(file, rc
         ? head + "exec bash " + (rc.login ? "-lic" : "-ic") + " " + shellQuote(quoted)
         : head + "exec " + quoted);
     }
-    return codexArgv(card, liveText, login, extra, rc, homeDir);
+    return codexArgv(card, liveText, login, extra, rc, homeDir, null, plain);
   },
 };
 
@@ -770,5 +786,5 @@ export async function launchArgv(provider, extra = [], machine = null, app = "cl
     throw new Error("this machine runs Windows — provider launches need the Windows recipes (not built yet). Plain agent rows still work.");
   const harness = HARNESS[app] ?? claudeHarness;
   return harness.launch(provider, machine, extraArgs(machine, extra), await rcMode(machine),
-    await mcpContext(machine, src, app));
+    await mcpContext(machine, src, app), src);
 }
