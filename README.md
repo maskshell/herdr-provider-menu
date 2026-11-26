@@ -2,9 +2,9 @@
 
 **English** | [简体中文](README.zh-CN.md)
 
-Start Claude Code and Codex in [Herdr](https://github.com/herdrdev/herdr-app) with a provider identity from [cc-switch](https://github.com/farion1231/cc-switch). Each terminal uses one provider. Terminals running side by side do not affect each other. The global configuration stays untouched. One terminal can run DeepSeek while the one next to it runs Kimi.
+Start Claude Code and Codex in [Herdr](https://github.com/herdrdev/herdr-app) with a provider identity from [cc-switch](https://github.com/farion1231/cc-switch). Each terminal uses one provider. Terminals running side by side do not affect each other. The global configuration stays untouched. One terminal can run DeepSeek while the one next to it runs Kimi. A session can also be copied to another machine with its workspace (regenerables stay behind) and resumed there under any provider of that harness the mod can launch.
 
-Claude Code and Codex are verified in the sandbox and on real machines (macOS and Linux), including cross-machine launches. Windows is not supported yet. [DESIGN.md](DESIGN.md) explains how the mod works, its decisions, and its security posture. [REVIEW.md](REVIEW.md) records the verification.
+Claude Code and Codex are verified in the sandbox and on real machines (macOS and Linux), including cross-machine launches. Session copies are verified end to end on real machines for Claude Code; the codex side is rig-verified and its resume argument matches codex 0.172.0's documented form (`resume <id> <prompt>`); a real-codex round is still pending. Windows is not supported yet. [DESIGN.md](DESIGN.md) explains how the mod works, its decisions, and its security posture. [REVIEW.md](REVIEW.md) records the verification.
 
 ![The + menu with a provider submenu](agent-menu/preview.png)
 
@@ -41,8 +41,11 @@ The panel docks into personal layouts at 280px and gives:
 - An `args` row per machine: persistent extra parameters, for example `--allow-dangerously-skip-permissions`. The mod itself adds no parameter. The recorded row is the only way one enters a launch.
 - An `rc profile` row per machine: run launches through the shell profile, so shell aliases and functions apply. Off by default.
 - An `mcp` row per machine: cross-machine launches also carry the MCP servers cc-switch has enabled here for that agent — Claude and Codex keep their own sets, and `only mine` makes the session use just the carried set. Same-machine launches never carry; the machine's own cc-switch has already written its set into the live config.
+- A `COPY SESSION  STAGE ›` row at the very bottom: stage the focused Claude Code or Codex session, then copy — or delta-update — the session's workspace to a directory on another machine (regenerables stay behind) and resume it there under any provider of that harness the mod can launch.
 
 The panel keeps the machine it last refreshed from. The refresh button shows the machine the shown lists came from and re-reads the active space's machine.
+
+Codex providers also launch on machines whose live `config.toml` keeps a cc-switch catalog pointer (`model_catalog_json`): the launcher synthesizes a single-model catalog for the provider's pinned model, stages it under `$TMPDIR` before the terminal spawns, and points `-c model_catalog_json` at it. An official model name mirrors the launch machine's own `codex debug models --bundled` entry with the mutations cc-switch applies for third-party endpoints, when that probe succeeds; anything else — an unknown name or a failed probe — gets a neutral vendored entry, and the panel notes when that happened. The current provider of the machine the shown lists came from skips the live-config checks when the launch lands on that same machine — the same pass cc-switch's own terminal gives it. Outside that same-machine pass, still refused — among others — a provider with a selected cc-switch profile, a `model_auto_compact_token_limit` override, and — cross-machine only — a provider whose own config carries a catalog pointer (the path would dangle on the target). (Verified in the sandbox against a real codex 0.172.0; the real-machine round is next.)
 
 `p1-install.sh` installs it together with the menu, docks a `provider-menu-panel` block into every personal layout, and builds a clone of Herdr's shipped `main` named after you (`main-<username>`; full-width tab bar with the reopen pill, the panel beside the terminal-and-status column). No layout file ships in this repo and nothing is copied by hand. The same toggle is bound to a key (`alt-p`; `cmd-shift-b` on macOS) in every layout the panel is docked into; Herdr reloads key bindings live. Want the menu only? Delete the block from your layout, or hide it with the key or `layout.toggle {id: "provider-menu-panel"}`.
 
@@ -57,6 +60,17 @@ claude() {
 ```
 
 (`command` keeps the alias or the function from calling itself.)
+
+### Copying a session to another machine
+
+The row at the panel's bottom stages the focused agent session for a copy (a same-machine copy works the same way):
+
+1. Focus a Claude Code or Codex terminal and click `STAGE ›`. The card names the source machine and the session's workspace.
+2. Switch to a space on the target machine, open a shell there, and `cd` into an empty directory (a first copy) or the directory an earlier copy made (an update).
+3. Pick that directory from the card's list, arm the checkbox (it reads `Update the session and workspace above` on an update target), and click a provider of the same harness. The workspace travels as a verified snapshot, sized for a project rather than a monorepo — regenerables (`node_modules`, `target`, `.venv`, …) stay behind and reinstall on demand, every other regular file crosses, including `.env` files and credentials (symlinks are skipped in v1; the confirm dialog names what crosses) — the transcript lands where the target's CLI looks for it, and the session resumes under the clicked provider's identity, with a first message you can edit in the confirm dialog.
+4. A modal then decides the source's fate: keep it (it may drift from the copy) or stop its tab. Esc counts as keep.
+
+Both ends carry a `.herdr-migrated` marker after a copy — the source workspace gains one too. Later copies onto the target update by delta, deletions included; the target's own edits are overwritten by the next copy (a target is a parking spot, by design), drift is counted and warned about before the run, and everything is re-hashed on the target after the transfer. `Cancel` stops a run and sweeps the temporary pack files off both machines — a first copy stopped mid-run leaves the target unmarked, so empty it before retrying, while an interrupted update retries as-is; the card's red `Clear` drops the staging itself.
 
 ### Headless machines
 
@@ -90,6 +104,7 @@ These commands return to the shipped layout. Delete the personal layout file und
 - Credentials reach the CLI through a RAM-only handoff where the machine allows it: an exec plants the secret in a 0600 file under `/dev/shm`, the terminal command only reads that path and deletes the file at once, and nothing lands on disk or in the recorded command. Machines without `/dev/shm` (macOS) fall back to the credential riding in the launch command itself. There, herdr's core records the command — including the credential — in its state file `~/.local/state/herdr-core/<session>/terminals.json`, with no automatic cleanup, and a first cross-machine launch asks for confirmation per machine pair. Live sessions show the fallback command in `/proc`. DESIGN.md §6 has the details.
 - Environment keys that exist only in the live settings file (`~/.claude/settings.json`) are blocked on each launch. Put tuning keys such as `CLAUDE_CODE_*` on each provider in cc-switch, not only in the live file.
 - Carried MCP definitions can hold tokens in their env. They travel the same RAM-only handoff as credentials; on a machine without /dev/shm they ride the launch command (the cross-machine dialog asks first), and the definitions sit on the launched process's command line for as long as it lives. On the target the carried set merges with the machine's own definitions — on the same name, the carried one wins for that session.
+- A session copy writes the workspace's files to the target machine's disk — `.env` files and credentials included; the confirm dialog names this before the run. The launch credential channels above do not cover workspace contents, and the transfer's chunks ride exec command lines, so file contents are briefly visible in the receiving machine's process list while the copy runs.
 - On a headless machine the database is the user's job. `scripts/seed-cc-switch-db.py` is a verification tool, not a provisioning path.
 
 ## Further reading
